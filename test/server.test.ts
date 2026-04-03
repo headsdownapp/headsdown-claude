@@ -253,4 +253,94 @@ describe("Plugin structure", () => {
       expect(config.headsdown.args[0]).toContain("dist/index.js");
     });
   });
+
+  describe("hooks/hooks.json", () => {
+    it("exists and has valid structure", async () => {
+      const hooksPath = join(import.meta.dirname, "..", "hooks", "hooks.json");
+      const raw = await readFile(hooksPath, "utf-8");
+      const config = JSON.parse(raw);
+
+      expect(config.hooks).toBeTruthy();
+      expect(config.hooks.SessionStart).toBeInstanceOf(Array);
+      expect(config.hooks.SessionStart).toHaveLength(1);
+    });
+
+    it("SessionStart hook uses CLAUDE_PLUGIN_ROOT for portability", async () => {
+      const hooksPath = join(import.meta.dirname, "..", "hooks", "hooks.json");
+      const raw = await readFile(hooksPath, "utf-8");
+      const config = JSON.parse(raw);
+
+      const sessionStart = config.hooks.SessionStart[0];
+      expect(sessionStart.hooks[0].command).toContain("${CLAUDE_PLUGIN_ROOT}");
+      expect(sessionStart.hooks[0].timeout).toBeLessThanOrEqual(10);
+    });
+  });
+
+  describe("hooks/session-start.sh", () => {
+    it("exists and is executable", async () => {
+      const { stat } = await import("node:fs/promises");
+      const scriptPath = join(import.meta.dirname, "..", "hooks", "session-start.sh");
+      const stats = await stat(scriptPath);
+      // Check executable bit (owner)
+      expect(stats.mode & 0o100).toBeTruthy();
+    });
+
+    it("uses set -euo pipefail for safety", async () => {
+      const scriptPath = join(import.meta.dirname, "..", "hooks", "session-start.sh");
+      const content = await readFile(scriptPath, "utf-8");
+      expect(content).toContain("set -euo pipefail");
+    });
+
+    it("uses CLAUDE_PLUGIN_ROOT for the CLI path", async () => {
+      const scriptPath = join(import.meta.dirname, "..", "hooks", "session-start.sh");
+      const content = await readFile(scriptPath, "utf-8");
+      expect(content).toContain("CLAUDE_PLUGIN_ROOT");
+    });
+
+    it("exits cleanly when CLI is not built", async () => {
+      const scriptPath = join(import.meta.dirname, "..", "hooks", "session-start.sh");
+      const content = await readFile(scriptPath, "utf-8");
+      // Should check if CLI exists before running
+      expect(content).toContain('if [ ! -f "$CLI" ]');
+      expect(content).toContain("exit 0");
+    });
+  });
+
+  describe("commands/headsdown.md", () => {
+    it("exists with valid frontmatter", async () => {
+      const cmdPath = join(import.meta.dirname, "..", "commands", "headsdown.md");
+      const content = await readFile(cmdPath, "utf-8");
+
+      expect(content).toMatch(/^---\n/);
+      expect(content).toContain("description:");
+      expect(content).toContain("allowed-tools:");
+    });
+
+    it("references the CLI for live context", async () => {
+      const cmdPath = join(import.meta.dirname, "..", "commands", "headsdown.md");
+      const content = await readFile(cmdPath, "utf-8");
+
+      expect(content).toContain("CLAUDE_PLUGIN_ROOT");
+      expect(content).toContain("dist/cli.js");
+    });
+
+    it("handles both status and auth arguments", async () => {
+      const cmdPath = join(import.meta.dirname, "..", "commands", "headsdown.md");
+      const content = await readFile(cmdPath, "utf-8");
+
+      expect(content).toContain("status");
+      expect(content).toContain("auth");
+      expect(content).toContain("$ARGUMENTS");
+    });
+  });
+
+  describe("plugin.json references hooks", () => {
+    it("manifest points to hooks config", async () => {
+      const manifestPath = join(import.meta.dirname, "..", ".claude-plugin", "plugin.json");
+      const raw = await readFile(manifestPath, "utf-8");
+      const manifest = JSON.parse(raw);
+
+      expect(manifest.hooks).toBe("./hooks/hooks.json");
+    });
+  });
 });

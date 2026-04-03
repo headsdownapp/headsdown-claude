@@ -3,9 +3,9 @@
 [HeadsDown](https://headsdown.app) availability plugin for Claude Code. Gives Claude awareness of your focus mode, schedule, and availability before it starts tasks.
 
 When installed, Claude will:
-1. **Check your availability** before starting significant work
-2. **Submit task proposals** for a verdict (approved or deferred)
-3. **Respect your focus time** by scoping work appropriately or deferring
+1. **Know your availability from the start** via a SessionStart hook that injects your current mode into context
+2. **Check before starting work** via a skill that teaches Claude to submit task proposals
+3. **Respect your focus time** by scoping work appropriately or deferring when you're busy
 
 ## Install
 
@@ -34,32 +34,40 @@ Or add it to your settings for permanent use.
 
 ## Setup
 
-The first time Claude tries to check your availability, it will see you're not authenticated and offer to run the auth flow. You can also trigger it manually:
+Authenticate with HeadsDown after installing:
 
-> "Run headsdown_auth to connect my HeadsDown account"
+```
+/headsdown auth
+```
 
-This starts a Device Flow: Claude gives you a URL and code, you approve in your browser, and the API key is saved locally at `~/.config/headsdown/credentials.json`.
+Or ask Claude: "Run headsdown_auth to connect my HeadsDown account"
+
+This starts a Device Flow: you visit a URL, enter a code, and the API key is saved locally at `~/.config/headsdown/credentials.json`.
 
 ## What's in the Plugin
 
-This plugin bundles three components:
+### SessionStart Hook
 
-### Skill: `headsdown`
+Every time Claude Code starts a session, the hook calls the HeadsDown API and injects your current availability into Claude's context. Claude knows your mode, status, and schedule before you say anything. If you're not authenticated or the API is unreachable, the hook exits silently (no disruption).
 
-A SKILL.md that teaches Claude when and how to check availability. Claude loads this contextually before starting tasks, so it knows to check your status without being told. Invoke it manually with `/headsdown` if needed.
+### `/headsdown` Command
+
+Quick slash command for direct access:
+- `/headsdown` or `/headsdown status` - See your current availability
+- `/headsdown auth` - Authenticate with HeadsDown
+
+### `headsdown` Skill
+
+A SKILL.md that teaches Claude when and how to check availability. Claude loads this contextually before starting tasks, so it knows to check your status and submit proposals for non-trivial work.
 
 ### MCP Tools
 
 Three tools registered via the plugin's MCP server:
 
-**`headsdown_status`** - Check your current availability. Returns:
-- Mode (online, busy, limited, offline)
-- Status message and emoji
-- Time remaining
-- Work schedule context
+**`headsdown_status`** - Check your current availability. Returns mode, status message, time remaining, and schedule.
 
 **`headsdown_propose`** - Submit a task proposal. Returns a verdict:
-- **Approved**: Claude proceeds with the task
+- **Approved**: Claude proceeds
 - **Deferred**: Claude informs you and suggests postponing or reducing scope
 
 | Parameter | Required | Description |
@@ -78,10 +86,13 @@ Three tools registered via the plugin's MCP server:
 You set your focus mode in HeadsDown (busy for 2 hours)
          │
          ▼
-Claude Code starts a task
+Claude Code starts a session
          │
          ▼
-headsdown_status ──► "User is busy, 90 min remaining, 🔨 Deep work"
+SessionStart hook ──► [HeadsDown] Mode: busy, 🔨 Deep work, 120min remaining
+         │
+         ▼
+Claude already knows your status. User asks for a big refactor.
          │
          ▼
 headsdown_propose ──► { decision: "deferred", reason: "..." }
@@ -96,16 +107,22 @@ Claude tells you: "You're in focus mode. Want me to defer this,
 ```
 headsdown-claude-ext/
 ├── .claude-plugin/
-│   └── plugin.json        # Plugin manifest
+│   └── plugin.json           # Plugin manifest
 ├── skills/
 │   └── headsdown/
-│       └── SKILL.md       # Agent behavioral instructions
-├── .mcp.json              # MCP server config
+│       └── SKILL.md          # Agent behavioral instructions
+├── commands/
+│   └── headsdown.md          # /headsdown slash command
+├── hooks/
+│   ├── hooks.json            # Hook configuration
+│   └── session-start.sh      # SessionStart hook script
+├── .mcp.json                 # MCP server config
 ├── src/
-│   ├── index.ts           # MCP server entry point
-│   └── server.ts          # Tool handlers (~200 lines)
+│   ├── index.ts              # MCP server entry point
+│   ├── server.ts             # Tool handlers
+│   └── cli.ts                # Lightweight CLI for hooks/commands
 ├── test/
-│   └── server.test.ts     # MCP + plugin structure tests
+│   └── server.test.ts        # 28 tests
 ├── package.json
 └── README.md
 ```
@@ -127,8 +144,6 @@ This plugin is a thin wrapper around the [HeadsDown SDK](https://github.com/head
 
 **What is stored locally:** Your API key at `~/.config/headsdown/credentials.json` (0600 permissions).
 
-The server is ~200 lines. Read it: [`src/server.ts`](src/server.ts).
-
 No telemetry. No analytics. No third-party requests.
 
 ## Development
@@ -139,10 +154,8 @@ cd headsdown-claude-ext
 npm install
 npm run build
 npm test
-```
 
-Validate the plugin manifest:
-```bash
+# Validate plugin structure
 claude plugins validate .
 ```
 
