@@ -1,0 +1,52 @@
+{
+  "name": "headsdown-claude-ext",
+  "version": "0.1.0",
+  "description": "HeadsDown availability extension for Claude Code. Gives Claude awareness of your focus mode, schedule, and availability before starting tasks.",
+  "type": "module",
+  "bin": {
+    "headsdown-claude-ext": "./dist/index.js"
+  },
+  "main": "./dist/index.js",
+  "files": ["dist", "README.md", "LICENSE"],
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "dev": "tsc -p tsconfig.build.json --watch",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "lint": "prettier --check 'src/**/*.ts' 'test/**/*.ts'",
+    "format": "prettier --write 'src/**/*.ts' 'test/**/*.ts'",
+    "prepublishOnly": "npm run build",
+    "clean": "rm -rf dist"
+  },
+  "keywords": [
+    "claude",
+    "claude-code",
+    "mcp",
+    "headsdown",
+    "availability",
+    "focus",
+    "ai-agent"
+  ],
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/headsdownapp/headsdown-claude-ext.git"
+  },
+  "homepage": "https://github.com/headsdownapp/headsdown-claude-ext#readme",
+  "bugs": {
+    "url": "https://github.com/headsdownapp/headsdown-claude-ext/issues"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "dependencies": {
+    "@headsdown/sdk": "file:../headsdown-sdk",
+    "@modelcontextprotocol/sdk": "^1.12.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.17.0",
+    "prettier": "^3.4.0",
+    "typescript": "^5.7.0",
+    "vitest": "^3.1.0"
+  }
+}
