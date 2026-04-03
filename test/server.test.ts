@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, rm, writeFile, readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
@@ -171,6 +171,86 @@ describe("HeadsDown MCP Server", () => {
 
       expect(auth?.inputSchema.required).toEqual([]);
       expect(Object.keys(auth?.inputSchema.properties as object)).toEqual([]);
+    });
+  });
+});
+
+// === Plugin Structure Tests ===
+
+describe("Plugin structure", () => {
+  describe("plugin.json", () => {
+    it("exists and has valid structure", async () => {
+      const manifestPath = join(import.meta.dirname, "..", ".claude-plugin", "plugin.json");
+      const raw = await readFile(manifestPath, "utf-8");
+      const manifest = JSON.parse(raw);
+
+      expect(manifest.name).toBe("headsdown");
+      expect(manifest.name).toMatch(/^[a-z][a-z0-9]*(-[a-z0-9]+)*$/);
+      expect(manifest.description).toBeTruthy();
+      expect(manifest.description.length).toBeGreaterThan(20);
+      expect(manifest.license).toBe("MIT");
+      expect(manifest.author).toBeTruthy();
+      expect(manifest.repository).toBeTruthy();
+    });
+  });
+
+  describe("SKILL.md", () => {
+    it("exists and has valid frontmatter", async () => {
+      const skillPath = join(import.meta.dirname, "..", "skills", "headsdown", "SKILL.md");
+      const content = await readFile(skillPath, "utf-8");
+
+      expect(content).toMatch(/^---\n/);
+      expect(content).toContain("name: headsdown");
+      expect(content).toContain("description:");
+    });
+
+    it("description is meaningful and within limits", async () => {
+      const skillPath = join(import.meta.dirname, "..", "skills", "headsdown", "SKILL.md");
+      const content = await readFile(skillPath, "utf-8");
+
+      const descMatch = content.match(/description:\s*(.+)/);
+      expect(descMatch).not.toBeNull();
+      expect(descMatch![1].length).toBeGreaterThan(20);
+      expect(descMatch![1].length).toBeLessThanOrEqual(1024);
+    });
+
+    it("references the MCP tools", async () => {
+      const skillPath = join(import.meta.dirname, "..", "skills", "headsdown", "SKILL.md");
+      const content = await readFile(skillPath, "utf-8");
+
+      expect(content).toContain("headsdown_status");
+      expect(content).toContain("headsdown_propose");
+      expect(content).toContain("headsdown_auth");
+    });
+
+    it("documents all availability modes", async () => {
+      const skillPath = join(import.meta.dirname, "..", "skills", "headsdown", "SKILL.md");
+      const content = await readFile(skillPath, "utf-8");
+
+      expect(content).toContain("online");
+      expect(content).toContain("busy");
+      expect(content).toContain("limited");
+      expect(content).toContain("offline");
+    });
+
+    it("documents verdict decisions", async () => {
+      const skillPath = join(import.meta.dirname, "..", "skills", "headsdown", "SKILL.md");
+      const content = await readFile(skillPath, "utf-8");
+
+      expect(content).toContain("approved");
+      expect(content).toContain("deferred");
+    });
+  });
+
+  describe(".mcp.json", () => {
+    it("exists and references the server entry point", async () => {
+      const mcpPath = join(import.meta.dirname, "..", ".mcp.json");
+      const raw = await readFile(mcpPath, "utf-8");
+      const config = JSON.parse(raw);
+
+      expect(config.headsdown).toBeTruthy();
+      expect(config.headsdown.command).toBe("node");
+      expect(config.headsdown.args[0]).toContain("dist/index.js");
     });
   });
 });
