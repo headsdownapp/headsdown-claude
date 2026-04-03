@@ -40,7 +40,7 @@
     "node": ">=18.0.0"
   },
   "dependencies": {
-    "@headsdown/sdk": "file:../headsdown-sdk",
+    "@headsdown/sdk": "github:headsdownapp/headsdown-sdk",
     "@modelcontextprotocol/sdk": "^1.12.0"
   },
   "devDependencies": {
