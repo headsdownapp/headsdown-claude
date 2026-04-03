@@ -274,6 +274,22 @@ describe("Plugin structure", () => {
       expect(sessionStart.hooks[0].command).toContain("${CLAUDE_PLUGIN_ROOT}");
       expect(sessionStart.hooks[0].timeout).toBeLessThanOrEqual(10);
     });
+
+    it("PreToolUse hook targets Write, Edit, and MultiEdit", async () => {
+      const hooksPath = join(import.meta.dirname, "..", "hooks", "hooks.json");
+      const raw = await readFile(hooksPath, "utf-8");
+      const config = JSON.parse(raw);
+
+      expect(config.hooks.PreToolUse).toBeInstanceOf(Array);
+      expect(config.hooks.PreToolUse).toHaveLength(1);
+
+      const preToolUse = config.hooks.PreToolUse[0];
+      expect(preToolUse.matcher).toContain("Write");
+      expect(preToolUse.matcher).toContain("Edit");
+      expect(preToolUse.matcher).toContain("MultiEdit");
+      expect(preToolUse.hooks[0].command).toContain("${CLAUDE_PLUGIN_ROOT}");
+      expect(preToolUse.hooks[0].timeout).toBeLessThanOrEqual(10);
+    });
   });
 
   describe("hooks/session-start.sh", () => {
@@ -303,6 +319,55 @@ describe("Plugin structure", () => {
       // Should check if CLI exists before running
       expect(content).toContain('if [ ! -f "$CLI" ]');
       expect(content).toContain("exit 0");
+    });
+  });
+
+  describe("hooks/check-availability.sh", () => {
+    it("exists and is executable", async () => {
+      const { stat } = await import("node:fs/promises");
+      const scriptPath = join(import.meta.dirname, "..", "hooks", "check-availability.sh");
+      const stats = await stat(scriptPath);
+      expect(stats.mode & 0o100).toBeTruthy();
+    });
+
+    it("uses set -euo pipefail for safety", async () => {
+      const scriptPath = join(import.meta.dirname, "..", "hooks", "check-availability.sh");
+      const content = await readFile(scriptPath, "utf-8");
+      expect(content).toContain("set -euo pipefail");
+    });
+
+    it("handles all four modes", async () => {
+      const scriptPath = join(import.meta.dirname, "..", "hooks", "check-availability.sh");
+      const content = await readFile(scriptPath, "utf-8");
+
+      expect(content).toContain("online");
+      expect(content).toContain("busy");
+      expect(content).toContain("limited");
+      expect(content).toContain("offline");
+    });
+
+    it("uses permissionDecision for busy locked and offline", async () => {
+      const scriptPath = join(import.meta.dirname, "..", "hooks", "check-availability.sh");
+      const content = await readFile(scriptPath, "utf-8");
+
+      // busy+locked and offline should ask, not just allow
+      expect(content).toContain('"permissionDecision": "ask"');
+      // busy (unlocked) and limited should allow with warning
+      expect(content).toContain('"permissionDecision": "allow"');
+    });
+
+    it("references headsdown_propose in system messages", async () => {
+      const scriptPath = join(import.meta.dirname, "..", "hooks", "check-availability.sh");
+      const content = await readFile(scriptPath, "utf-8");
+
+      expect(content).toContain("headsdown_propose");
+    });
+
+    it("exits silently when CLI is not built", async () => {
+      const scriptPath = join(import.meta.dirname, "..", "hooks", "check-availability.sh");
+      const content = await readFile(scriptPath, "utf-8");
+
+      expect(content).toContain('if [ ! -f "$CLI" ]');
     });
   });
 

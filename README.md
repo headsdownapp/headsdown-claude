@@ -50,6 +50,20 @@ This starts a Device Flow: you visit a URL, enter a code, and the API key is sav
 
 Every time Claude Code starts a session, the hook calls the HeadsDown API and injects your current availability into Claude's context. Claude knows your mode, status, and schedule before you say anything. If you're not authenticated or the API is unreachable, the hook exits silently (no disruption).
 
+### PreToolUse Hook (Write/Edit)
+
+Before Claude writes or edits any file, the hook checks your current mode:
+
+| Mode | Behavior |
+|------|----------|
+| **online** | Silent pass. No interruption. |
+| **busy** | Allow, but inject a warning: "Submit a proposal via headsdown_propose before continuing." |
+| **busy + locked** | Ask the user for explicit permission. Status is locked = do not disturb. |
+| **limited** | Allow, but remind Claude to keep changes small and focused. |
+| **offline** | Ask the user for explicit permission. All changes should be deferred. |
+
+This is the enforcement layer. The skill suggests checking availability; this hook requires it.
+
 ### `/headsdown` Command
 
 Quick slash command for direct access:
@@ -115,14 +129,15 @@ headsdown-claude-ext/
 │   └── headsdown.md          # /headsdown slash command
 ├── hooks/
 │   ├── hooks.json            # Hook configuration
-│   └── session-start.sh      # SessionStart hook script
+│   ├── session-start.sh      # Injects availability at session start
+│   └── check-availability.sh # Gates file modifications by mode
 ├── .mcp.json                 # MCP server config
 ├── src/
 │   ├── index.ts              # MCP server entry point
 │   ├── server.ts             # Tool handlers
 │   └── cli.ts                # Lightweight CLI for hooks/commands
 ├── test/
-│   └── server.test.ts        # 28 tests
+│   └── server.test.ts        # 35 tests
 ├── package.json
 └── README.md
 ```

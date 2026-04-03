@@ -1,5 +1,5 @@
 {
-  "description": "HeadsDown availability hooks. Injects user availability at session start.",
+  "description": "HeadsDown availability hooks. Injects status at session start and checks availability before file modifications.",
   "hooks": {
     "SessionStart": [
       {
@@ -8,6 +8,18 @@
           {
             "type": "command",
             "command": "bash ${CLAUDE_PLUGIN_ROOT}/hooks/session-start.sh",
+            "timeout": 10
+          }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "Write|Edit|MultiEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash ${CLAUDE_PLUGIN_ROOT}/hooks/check-availability.sh",
             "timeout": 10
           }
         ]
