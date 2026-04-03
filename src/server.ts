@@ -3,12 +3,15 @@ import { CallToolRequestSchema, ListToolsRequestSchema } from "@modelcontextprot
 import {
   HeadsDownClient,
   CredentialStore,
+  ProposalStateStore,
   AuthError,
   ApiError,
   NetworkError,
   ValidationError,
 } from "@headsdown/sdk";
 import type { Contract, Calendar, ProposalInput, DeviceAuthorization } from "@headsdown/sdk";
+
+const proposalState = new ProposalStateStore();
 
 export function createServer(): Server {
   const server = new Server(
@@ -156,6 +159,16 @@ async function handlePropose(args: Record<string, unknown>) {
   };
 
   const verdict = await client.submitProposal(input);
+
+  // Record approved proposals so the PreToolUse hook can check state
+  if (verdict.decision === "approved") {
+    await proposalState.recordApproval({
+      id: verdict.proposalId,
+      decision: "approved",
+      description: input.description,
+      evaluatedAt: verdict.evaluatedAt,
+    });
+  }
 
   const guidance =
     verdict.decision === "approved"

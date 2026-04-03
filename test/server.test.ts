@@ -323,51 +323,88 @@ describe("Plugin structure", () => {
   });
 
   describe("hooks/check-availability.sh", () => {
+    const scriptPath = join(import.meta.dirname, "..", "hooks", "check-availability.sh");
+
     it("exists and is executable", async () => {
       const { stat } = await import("node:fs/promises");
-      const scriptPath = join(import.meta.dirname, "..", "hooks", "check-availability.sh");
       const stats = await stat(scriptPath);
       expect(stats.mode & 0o100).toBeTruthy();
     });
 
     it("uses set -euo pipefail for safety", async () => {
-      const scriptPath = join(import.meta.dirname, "..", "hooks", "check-availability.sh");
       const content = await readFile(scriptPath, "utf-8");
       expect(content).toContain("set -euo pipefail");
     });
 
-    it("handles all four modes", async () => {
-      const scriptPath = join(import.meta.dirname, "..", "hooks", "check-availability.sh");
+    it("handles all four availability modes", async () => {
       const content = await readFile(scriptPath, "utf-8");
-
       expect(content).toContain("online");
       expect(content).toContain("busy");
       expect(content).toContain("limited");
       expect(content).toContain("offline");
     });
 
-    it("uses permissionDecision for busy locked and offline", async () => {
-      const scriptPath = join(import.meta.dirname, "..", "hooks", "check-availability.sh");
+    it("implements all three trust levels", async () => {
       const content = await readFile(scriptPath, "utf-8");
+      expect(content).toContain("advisory");
+      expect(content).toContain("active");
+      expect(content).toContain("guarded");
+    });
 
-      // busy+locked and offline should ask, not just allow
+    it("advisory mode never returns permissionDecision allow", async () => {
+      const content = await readFile(scriptPath, "utf-8");
+      // Extract the advisory case block
+      const advisoryBlock = content.match(/advisory\)[\s\S]*?;;\s*\n\s*active/)?.[0] ?? "";
+      expect(advisoryBlock).not.toContain('"permissionDecision": "allow"');
+      // But it should have ask for locked/offline
+      expect(advisoryBlock).toContain('"permissionDecision": "ask"');
+    });
+
+    it("active mode returns allow when proposal exists", async () => {
+      const content = await readFile(scriptPath, "utf-8");
+      const activeBlock = content.match(/active\)[\s\S]*?;;\s*\n\s*guarded/)?.[0] ?? "";
+      expect(activeBlock).toContain('"permissionDecision": "allow"');
+      expect(activeBlock).toContain("Auto-approved");
+    });
+
+    it("guarded mode requires proposal for busy/limited", async () => {
+      const content = await readFile(scriptPath, "utf-8");
+      const guardedBlock = content.match(/guarded\)[\s\S]*?;;\s*\n\s*\*\)/)?.[0] ?? "";
+      expect(guardedBlock).toContain('"permissionDecision": "ask"');
+      expect(guardedBlock).toContain("No approved proposal");
+    });
+
+    it("checks sensitive paths before mode logic", async () => {
+      const content = await readFile(scriptPath, "utf-8");
+      // Sensitive path check should come before the trust level case statement
+      const sensitiveIdx = content.indexOf("Sensitive file detected");
+      const trustIdx = content.indexOf('case "$trust_level"');
+      expect(sensitiveIdx).toBeLessThan(trustIdx);
       expect(content).toContain('"permissionDecision": "ask"');
-      // busy (unlocked) and limited should allow with warning
-      expect(content).toContain('"permissionDecision": "allow"');
+    });
+
+    it("reads tool input file path from stdin", async () => {
+      const content = await readFile(scriptPath, "utf-8");
+      expect(content).toContain("tool_input");
+      expect(content).toContain("file_path");
     });
 
     it("references headsdown_propose in system messages", async () => {
-      const scriptPath = join(import.meta.dirname, "..", "hooks", "check-availability.sh");
       const content = await readFile(scriptPath, "utf-8");
-
       expect(content).toContain("headsdown_propose");
     });
 
     it("exits silently when CLI is not built", async () => {
-      const scriptPath = join(import.meta.dirname, "..", "hooks", "check-availability.sh");
       const content = await readFile(scriptPath, "utf-8");
-
       expect(content).toContain('if [ ! -f "$CLI" ]');
+    });
+
+    it("all system messages use [HeadsDown] prefix", async () => {
+      const content = await readFile(scriptPath, "utf-8");
+      const systemMessages = content.match(/"systemMessage":\s*"[^"]+"/g) ?? [];
+      for (const msg of systemMessages) {
+        expect(msg).toContain("[HeadsDown]");
+      }
     });
   });
 

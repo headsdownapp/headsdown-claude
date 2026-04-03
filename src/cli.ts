@@ -6,8 +6,8 @@
  * hooks and commands run as shell scripts and can't call MCP tools directly.
  */
 
-import { HeadsDownClient, AuthError } from "@headsdown/sdk";
-import type { Contract, Calendar } from "@headsdown/sdk";
+import { HeadsDownClient, ConfigStore, ProposalStateStore, AuthError } from "@headsdown/sdk";
+import type { Contract, Calendar, HeadsDownConfig } from "@headsdown/sdk";
 
 const command = process.argv[2];
 
@@ -17,11 +17,16 @@ async function main() {
       return await status();
     case "summary":
       return await summary();
+    case "config":
+      return await config();
+    case "proposals":
+      return await proposals();
     default:
       process.exit(1);
   }
 }
 
+/** Full availability status as JSON. */
 async function status() {
   const client = await HeadsDownClient.fromCredentials();
   const { contract, calendar } = await client.getAvailability();
@@ -44,6 +49,31 @@ async function summary() {
   const client = await HeadsDownClient.fromCredentials();
   const { contract, calendar } = await client.getAvailability();
   console.log(formatSummary(contract, calendar));
+}
+
+/** Output current config as JSON. */
+async function config() {
+  const store = new ConfigStore();
+  const cfg = await store.load();
+  console.log(JSON.stringify(cfg, null, 2));
+}
+
+/** Output proposal state. With --check, exit 0 if approved exists, 1 otherwise. */
+async function proposals() {
+  const store = new ProposalStateStore();
+  const flag = process.argv[3];
+
+  if (flag === "--check") {
+    const hasApproved = await store.hasApprovedProposal();
+    process.exit(hasApproved ? 0 : 1);
+  }
+
+  const latest = await store.getLatestApproved();
+  if (latest) {
+    console.log(JSON.stringify(latest, null, 2));
+  } else {
+    console.log(JSON.stringify(null));
+  }
 }
 
 function formatSummary(contract: Contract | null, calendar: Calendar): string {
@@ -83,7 +113,6 @@ function formatSummary(contract: Contract | null, calendar: Calendar): string {
 
 main().catch((error) => {
   if (error instanceof AuthError) {
-    // Silent exit for hooks; they should not disrupt the session
     process.exit(1);
   }
   process.exit(1);
