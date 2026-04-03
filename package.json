@@ -1,10 +1,10 @@
 {
-  "name": "headsdown-claude-ext",
+  "name": "headsdown-claude",
   "version": "0.1.0",
   "description": "HeadsDown availability extension for Claude Code. Gives Claude awareness of your focus mode, schedule, and availability before starting tasks.",
   "type": "module",
   "bin": {
-    "headsdown-claude-ext": "./dist/index.js"
+    "headsdown-claude": "./dist/index.js"
   },
   "main": "./dist/index.js",
   "files": ["dist", "README.md", "LICENSE"],
@@ -30,11 +30,11 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "https://github.com/headsdownapp/headsdown-claude-ext.git"
+    "url": "https://github.com/headsdownapp/headsdown-claude.git"
   },
-  "homepage": "https://github.com/headsdownapp/headsdown-claude-ext#readme",
+  "homepage": "https://github.com/headsdownapp/headsdown-claude#readme",
   "bugs": {
-    "url": "https://github.com/headsdownapp/headsdown-claude-ext/issues"
+    "url": "https://github.com/headsdownapp/headsdown-claude/issues"
   },
   "engines": {
     "node": ">=18.0.0"

@@ -1,4 +1,4 @@
-# headsdown-claude-ext
+# headsdown-claude
 
 [HeadsDown](https://headsdown.app) availability plugin for Claude Code. Gives Claude awareness of your focus mode, schedule, and availability before it starts tasks.
 
@@ -18,8 +18,8 @@ When installed, Claude will:
 ### From a local directory
 
 ```bash
-git clone https://github.com/headsdownapp/headsdown-claude-ext.git
-cd headsdown-claude-ext
+git clone https://github.com/headsdownapp/headsdown-claude.git
+cd headsdown-claude
 npm install
 npm run build
 ```
@@ -27,7 +27,7 @@ npm run build
 Then start Claude Code with the plugin:
 
 ```bash
-claude --plugin-dir /path/to/headsdown-claude-ext
+claude --plugin-dir /path/to/headsdown-claude
 ```
 
 Or add it to your settings for permanent use.
@@ -119,7 +119,7 @@ Claude tells you: "You're in focus mode. Want me to defer this,
 ## Plugin Structure
 
 ```
-headsdown-claude-ext/
+headsdown-claude/
 ├── .claude-plugin/
 │   └── plugin.json           # Plugin manifest
 ├── skills/
@@ -164,8 +164,8 @@ No telemetry. No analytics. No third-party requests.
 ## Development
 
 ```bash
-git clone https://github.com/headsdownapp/headsdown-claude-ext.git
-cd headsdown-claude-ext
+git clone https://github.com/headsdownapp/headsdown-claude.git
+cd headsdown-claude
 npm install
 npm run build
 npm test

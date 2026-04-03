@@ -8,7 +8,7 @@
     "url": "https://headsdown.app"
   },
   "homepage": "https://headsdown.app",
-  "repository": "https://github.com/headsdownapp/headsdown-claude-ext",
+  "repository": "https://github.com/headsdownapp/headsdown-claude",
   "license": "MIT",
   "keywords": [
     "availability",
