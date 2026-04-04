@@ -8,10 +8,13 @@ import {
   ApiError,
   NetworkError,
   ValidationError,
+  CalibrationTracker,
+  ConfigStore,
 } from "@headsdown/sdk";
 import type { Contract, Calendar, ProposalInput, DeviceAuthorization } from "@headsdown/sdk";
 
 const proposalState = new ProposalStateStore();
+let activeTracker: CalibrationTracker | null = null;
 
 export function createServer(): Server {
   const server = new Server(
@@ -85,11 +88,43 @@ export function createServer(): Server {
           required: [],
         },
       },
+      {
+        name: "headsdown_report",
+        description:
+          "Report the outcome of a task that was previously approved via headsdown_propose. " +
+          "Call this when you've finished (or failed, or partially completed) a task. " +
+          "This helps HeadsDown learn and calibrate future verdicts for better accuracy.",
+        inputSchema: {
+          type: "object" as const,
+          properties: {
+            outcome: {
+              type: "string",
+              enum: ["completed", "failed", "partially_completed", "cancelled", "timed_out"],
+              description: "What happened with the task.",
+            },
+            error_category: {
+              type: "string",
+              description:
+                "If failed: category like 'compilation_error', 'test_failure', 'context_limit'.",
+            },
+            tests_passed: {
+              type: "boolean",
+              description: "Whether the changes pass tests.",
+            },
+          },
+          required: ["outcome"],
+        },
+      },
     ],
   }));
 
   server.setRequestHandler(CallToolRequestSchema, async (request) => {
     const { name, arguments: args } = request.params;
+
+    // Count every tool call as a turn signal for calibration
+    if (activeTracker) {
+      activeTracker.recordTurn();
+    }
 
     try {
       switch (name) {
@@ -99,6 +134,8 @@ export function createServer(): Server {
           return await handlePropose((args ?? {}) as Record<string, unknown>);
         case "headsdown_auth":
           return await handleAuth();
+        case "headsdown_report":
+          return await handleReport((args ?? {}) as Record<string, unknown>);
         default:
           return errorResult(`Unknown tool: ${name}`);
       }
@@ -168,6 +205,27 @@ async function handlePropose(args: Record<string, unknown>) {
       description: input.description,
       evaluatedAt: verdict.evaluatedAt,
     });
+
+    // Start calibration tracking for approved proposals
+    try {
+      const config = new ConfigStore();
+      const configData = await config.load();
+      if (configData.calibration !== false) {
+        // Dispose any existing tracker from a previous proposal
+        if (activeTracker) {
+          activeTracker.dispose();
+          activeTracker = null;
+        }
+        const tracker = new CalibrationTracker(client, verdict.proposalId, {
+          enabled: true,
+        });
+        tracker.start();
+        activeTracker = tracker;
+      }
+    } catch (error) {
+      // Don't fail the proposal if calibration setup fails
+      console.error("Calibration setup failed:", error);
+    }
   }
 
   const guidance =
@@ -240,6 +298,52 @@ async function handleAuth(): Promise<{
   }
 
   return textResult(lines.join("\n"));
+}
+
+async function handleReport(args: Record<string, unknown>) {
+  const outcome = args.outcome;
+  if (!outcome || typeof outcome !== "string") {
+    return errorResult("The 'outcome' parameter is required.");
+  }
+
+  const validOutcomes = ["completed", "failed", "partially_completed", "cancelled", "timed_out"];
+  if (!validOutcomes.includes(outcome)) {
+    return errorResult(`Invalid outcome. Must be one of: ${validOutcomes.join(", ")}`);
+  }
+
+  const tracker = activeTracker;
+  if (!tracker || !tracker.isActive) {
+    return errorResult(
+      "No active calibration session. Submit a proposal via headsdown_propose first.",
+    );
+  }
+
+  try {
+    const extras: Record<string, unknown> = {};
+    if (typeof args.error_category === "string") extras.errorCategory = args.error_category;
+    if (typeof args.tests_passed === "boolean") extras.testsPassed = args.tests_passed;
+
+    await tracker.complete(
+      outcome as "completed" | "failed" | "partially_completed" | "cancelled" | "timed_out",
+      extras,
+    );
+
+    return textResult(
+      JSON.stringify(
+        {
+          reported: true,
+          outcome,
+          message: "Outcome recorded. This helps HeadsDown calibrate future verdicts.",
+        },
+        null,
+        2,
+      ),
+    );
+  } catch (error) {
+    return handleError(error);
+  } finally {
+    activeTracker = null;
+  }
 }
 
 // === Helpers ===
