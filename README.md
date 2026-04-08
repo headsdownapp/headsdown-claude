@@ -1,11 +1,12 @@
 # headsdown-claude
 
-[HeadsDown](https://headsdown.app) availability plugin for Claude Code. Gives Claude awareness of your focus mode, schedule, and availability before it starts tasks.
+[HeadsDown](https://headsdown.app) availability plugin for Claude Code. Gives Claude awareness of your focus mode, availability state, and availability before it starts tasks.
 
 When installed, Claude will:
 1. **Know your availability from the start** via a SessionStart hook that injects your current mode into context
 2. **Check before starting work** via a skill that teaches Claude to submit task proposals
 3. **Respect your focus time** by scoping work appropriately or deferring when you're busy
+4. **Show what you missed** via a digest of notifications that arrived during focus mode
 
 ## Install
 
@@ -48,7 +49,7 @@ This starts a Device Flow: you visit a URL, enter a code, and the API key is sav
 
 ### SessionStart Hook
 
-Every time Claude Code starts a session, the hook calls the HeadsDown API and injects your current availability into Claude's context. Claude knows your mode, status, and schedule before you say anything. If you're not authenticated or the API is unreachable, the hook exits silently (no disruption).
+Every time Claude Code starts a session, the hook calls the HeadsDown API and injects your current availability into Claude's context. Claude knows your mode, status, and availability state before you say anything. If you're not authenticated or the API is unreachable, the hook exits silently (no disruption).
 
 ### PreToolUse Hook (Write/Edit)
 
@@ -76,9 +77,9 @@ A SKILL.md that teaches Claude when and how to check availability. Claude loads 
 
 ### MCP Tools
 
-Three tools registered via the plugin's MCP server:
+Five tools registered via the plugin's MCP server:
 
-**`headsdown_status`** - Check your current availability. Returns mode, status message, time remaining, and schedule.
+**`headsdown_status`** - Check your current availability. Returns mode, status message, time remaining, and availability state.
 
 **`headsdown_propose`** - Submit a task proposal. Returns a verdict:
 - **Approved**: Claude proceeds
@@ -91,6 +92,20 @@ Three tools registered via the plugin's MCP server:
 | `estimated_minutes` | No | Expected duration |
 | `scope_summary` | No | Which modules, what kind of changes |
 | `source_ref` | No | Ticket number, PR URL, etc. |
+
+**`headsdown_digest`** - View notifications and messages that arrived during focus time. Returns grouped summaries by source and actor. Read-only.
+
+| Parameter | Required | Description |
+|-----------|----------|-------------|
+| `latest` | No | Limit to N most recent summaries (default: 20) |
+
+**`headsdown_report`** - Report the outcome of a task approved via `headsdown_propose`. Helps HeadsDown calibrate future verdicts.
+
+| Parameter | Required | Description |
+|-----------|----------|-------------|
+| `outcome` | Yes | completed, failed, partially_completed, cancelled, timed_out |
+| `error_category` | No | Category of error if failed |
+| `tests_passed` | No | Whether changes pass tests |
 
 **`headsdown_auth`** - Authenticate via Device Flow.
 
@@ -137,7 +152,7 @@ headsdown-claude/
 │   ├── server.ts             # Tool handlers
 │   └── cli.ts                # Lightweight CLI for hooks/commands
 ├── test/
-│   └── server.test.ts        # 35 tests
+│   └── server.test.ts        # 47 tests
 ├── package.json
 └── README.md
 ```
@@ -155,7 +170,7 @@ This plugin is a thin wrapper around the [HeadsDown SDK](https://github.com/head
 
 **What is sent:** Task descriptions and scope estimates (when you submit proposals), your API key for authentication.
 
-**What is received:** Your availability status, work schedule, and task verdicts.
+**What is received:** Your availability status, availability state, task verdicts, and digest summaries (aggregated notifications).
 
 **What is stored locally:** Your API key at `~/.config/headsdown/credentials.json` (0600 permissions).
 

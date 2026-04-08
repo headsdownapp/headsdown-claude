@@ -7,7 +7,7 @@
  */
 
 import { HeadsDownClient, ConfigStore, ProposalStateStore, AuthError } from "@headsdown/sdk";
-import type { Contract, Calendar, HeadsDownConfig } from "@headsdown/sdk";
+import type { Contract, ScheduleResolution } from "@headsdown/sdk";
 
 const command = process.argv[2];
 
@@ -21,6 +21,8 @@ async function main() {
       return await config();
     case "proposals":
       return await proposals();
+    case "digest-count":
+      return await digestCount();
     default:
       process.exit(1);
   }
@@ -29,14 +31,14 @@ async function main() {
 /** Full availability status as JSON. */
 async function status() {
   const client = await HeadsDownClient.fromCredentials();
-  const { contract, calendar } = await client.getAvailability();
+  const { contract, schedule: availability } = await client.getAvailability();
 
   console.log(
     JSON.stringify(
       {
         contract,
-        calendar,
-        summary: formatSummary(contract, calendar),
+        availability,
+        summary: formatSummary(contract, availability),
       },
       null,
       2,
@@ -47,8 +49,8 @@ async function status() {
 /** One-line summary suitable for system messages and command output. */
 async function summary() {
   const client = await HeadsDownClient.fromCredentials();
-  const { contract, calendar } = await client.getAvailability();
-  console.log(formatSummary(contract, calendar));
+  const { contract, schedule: availability } = await client.getAvailability();
+  console.log(formatSummary(contract, availability));
 }
 
 /** Output current config as JSON. */
@@ -76,7 +78,14 @@ async function proposals() {
   }
 }
 
-function formatSummary(contract: Contract | null, calendar: Calendar): string {
+/** Output the count of pending digest summaries. Used by session-start hook. */
+async function digestCount() {
+  const client = await HeadsDownClient.fromCredentials();
+  const summaries = await client.listDigestSummaries({ latest: 50 });
+  console.log(String(summaries.length));
+}
+
+function formatSummary(contract: Contract | null, availability: ScheduleResolution): string {
   const parts: string[] = [];
 
   if (!contract) {
@@ -98,14 +107,17 @@ function formatSummary(contract: Contract | null, calendar: Calendar): string {
       }
     }
 
-    if (contract.afk) parts.push("AFK");
     if (contract.lock) parts.push("locked");
   }
 
-  if (calendar.offHours) {
-    parts.push(`off-hours, next workday: ${calendar.nextWorkday}`);
-  } else if (calendar.workHours) {
-    parts.push(`work hours (${calendar.day})`);
+  parts.push(availability.inReachableHours ? "available hours" : "outside available hours");
+
+  if (availability.activeWindow) {
+    parts.push(`active availability window: ${availability.activeWindow.label} (${availability.activeWindow.mode})`);
+  }
+
+  if (availability.nextWindow) {
+    parts.push(`next availability window: ${availability.nextWindow.label} (${availability.nextWindow.mode})`);
   }
 
   return parts.join(", ");

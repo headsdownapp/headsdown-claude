@@ -21,8 +21,8 @@ if echo "$output" | jq -e . > /dev/null 2>&1; then
   mode=$(echo "$output" | jq -r '.contract.mode // "unknown"')
   status_text=$(echo "$output" | jq -r '.contract.statusText // empty')
   summary=$(echo "$output" | jq -r '.summary // empty')
-  off_hours=$(echo "$output" | jq -r '.calendar.offHours // false')
-  work_hours=$(echo "$output" | jq -r '.calendar.workHours // false')
+  in_reachable_hours=$(echo "$output" | jq -r '.availability.inReachableHours // false')
+  active_window_label=$(echo "$output" | jq -r '.availability.activeWindow.label // empty')
 
   # Build context message
   context="[HeadsDown] User availability at session start:"
@@ -36,14 +36,28 @@ if echo "$output" | jq -e . > /dev/null 2>&1; then
     fi
   fi
 
-  if [ "$off_hours" = "true" ]; then
-    context="$context Currently off-hours."
-  elif [ "$work_hours" = "true" ]; then
-    context="$context Work hours active."
+  if [ "$in_reachable_hours" = "true" ]; then
+    context="$context Currently in available hours."
+  else
+    context="$context Currently outside available hours."
+  fi
+
+  if [ -n "$active_window_label" ] && [ "$active_window_label" != "null" ]; then
+    context="$context Active window: $active_window_label."
   fi
 
   if [ -n "$summary" ] && [ "$summary" != "null" ]; then
     context="$context ($summary)"
+  fi
+
+  # Check for pending digest entries
+  digest_count=$(node "$CLI" digest-count 2>/dev/null) || digest_count="0"
+  if [ "$digest_count" != "0" ] && [ -n "$digest_count" ]; then
+    if [ "$digest_count" = "1" ]; then
+      context="$context You have 1 digest summary from your last focus session. Use headsdown_digest to review what you missed."
+    else
+      context="$context You have $digest_count digest summaries from your last focus session. Use headsdown_digest to review what you missed."
+    fi
   fi
 
   # Output as JSON with systemMessage so Claude sees it in context

@@ -46,12 +46,12 @@ async function createTestClient() {
 
 describe("HeadsDown MCP Server", () => {
   describe("listTools", () => {
-    it("exposes three tools", async () => {
+    it("exposes five tools", async () => {
       const client = await createTestClient();
       const result = await client.listTools();
 
       const names = result.tools.map((t) => t.name).sort();
-      expect(names).toEqual(["headsdown_auth", "headsdown_propose", "headsdown_status"]);
+      expect(names).toEqual(["headsdown_auth", "headsdown_digest", "headsdown_propose", "headsdown_report", "headsdown_status"]);
     });
 
     it("headsdown_status has no required parameters", async () => {
@@ -131,6 +131,52 @@ describe("HeadsDown MCP Server", () => {
     });
   });
 
+  describe("headsdown_digest", () => {
+    it("returns auth error when not authenticated", async () => {
+      const client = await createTestClient();
+      const result = await client.callTool({ name: "headsdown_digest", arguments: {} });
+
+      const text = (result.content as Array<{ type: string; text: string }>)[0].text;
+      expect(text).toContain("Not authenticated");
+      expect(result.isError).toBe(true);
+    });
+  });
+
+  describe("headsdown_report", () => {
+    it("returns error for missing outcome", async () => {
+      const client = await createTestClient();
+      const result = await client.callTool({ name: "headsdown_report", arguments: {} });
+
+      const text = (result.content as Array<{ type: string; text: string }>)[0].text;
+      expect(text).toContain("outcome");
+      expect(result.isError).toBe(true);
+    });
+
+    it("returns error for invalid outcome value", async () => {
+      const client = await createTestClient();
+      const result = await client.callTool({
+        name: "headsdown_report",
+        arguments: { outcome: "invalid_value" },
+      });
+
+      const text = (result.content as Array<{ type: string; text: string }>)[0].text;
+      expect(text).toContain("Invalid outcome");
+      expect(result.isError).toBe(true);
+    });
+
+    it("returns error when no active calibration session", async () => {
+      const client = await createTestClient();
+      const result = await client.callTool({
+        name: "headsdown_report",
+        arguments: { outcome: "completed" },
+      });
+
+      const text = (result.content as Array<{ type: string; text: string }>)[0].text;
+      expect(text).toContain("No active calibration session");
+      expect(result.isError).toBe(true);
+    });
+  });
+
   describe("unknown tool", () => {
     it("returns error for unknown tool name", async () => {
       const client = await createTestClient();
@@ -162,6 +208,24 @@ describe("HeadsDown MCP Server", () => {
       expect(props.estimated_minutes.type).toBe("number");
       expect(props.scope_summary.type).toBe("string");
       expect(props.source_ref.type).toBe("string");
+    });
+
+    it("digest tool has optional latest parameter", async () => {
+      const client = await createTestClient();
+      const result = await client.listTools();
+      const digest = result.tools.find((t) => t.name === "headsdown_digest");
+      const props = digest?.inputSchema.properties as Record<string, { type: string }>;
+
+      expect(props.latest.type).toBe("number");
+      expect(digest?.inputSchema.required).toEqual([]);
+    });
+
+    it("report tool requires outcome", async () => {
+      const client = await createTestClient();
+      const result = await client.listTools();
+      const report = result.tools.find((t) => t.name === "headsdown_report");
+
+      expect(report?.inputSchema.required).toEqual(["outcome"]);
     });
 
     it("auth tool has empty parameters", async () => {
@@ -220,6 +284,8 @@ describe("Plugin structure", () => {
 
       expect(content).toContain("headsdown_status");
       expect(content).toContain("headsdown_propose");
+      expect(content).toContain("headsdown_digest");
+      expect(content).toContain("headsdown_report");
       expect(content).toContain("headsdown_auth");
     });
 

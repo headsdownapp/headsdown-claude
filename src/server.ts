@@ -11,7 +11,7 @@ import {
   CalibrationTracker,
   ConfigStore,
 } from "@headsdown/sdk";
-import type { Contract, Calendar, ProposalInput, DeviceAuthorization } from "@headsdown/sdk";
+import type { Contract, ScheduleResolution, ProposalInput, DeviceAuthorization, DigestSummary } from "@headsdown/sdk";
 
 const proposalState = new ProposalStateStore();
 let activeTracker: CalibrationTracker | null = null;
@@ -28,7 +28,7 @@ export function createServer(): Server {
         name: "headsdown_status",
         description:
           "Check the user's current availability on HeadsDown. Returns their focus mode " +
-          "(online/busy/limited/offline), status message, time remaining, and work schedule. " +
+          "(online/busy/limited/offline), status message, time remaining, and availability state. " +
           "Call this before starting any significant task to understand whether the user is " +
           "available, in focus mode, or away. If the user is in 'busy' or 'limited' mode, " +
           "respect their focus time and scope work accordingly.",
@@ -89,6 +89,24 @@ export function createServer(): Server {
         },
       },
       {
+        name: "headsdown_digest",
+        description:
+          "View the user's HeadsDown digest: aggregated notifications and messages that arrived " +
+          "while they were in focus mode. Returns summaries grouped by source (e.g., Slack " +
+          "messages from a teammate, GitHub PR comments). Call this at the start of a session " +
+          "or when the user asks what they missed. Read-only; does not dismiss or acknowledge entries.",
+        inputSchema: {
+          type: "object" as const,
+          properties: {
+            latest: {
+              type: "number",
+              description: "Limit to N most recent digest summaries. Defaults to 20.",
+            },
+          },
+          required: [],
+        },
+      },
+      {
         name: "headsdown_report",
         description:
           "Report the outcome of a task that was previously approved via headsdown_propose. " +
@@ -134,6 +152,8 @@ export function createServer(): Server {
           return await handlePropose((args ?? {}) as Record<string, unknown>);
         case "headsdown_auth":
           return await handleAuth();
+        case "headsdown_digest":
+          return await handleDigest((args ?? {}) as Record<string, unknown>);
         case "headsdown_report":
           return await handleReport((args ?? {}) as Record<string, unknown>);
         default:
@@ -157,15 +177,15 @@ async function handleStatus() {
     );
   }
 
-  const { contract, calendar } = await client.getAvailability();
+  const { contract, schedule: availability } = await client.getAvailability();
 
   return textResult(
     JSON.stringify(
       {
         authenticated: true,
         contract,
-        calendar,
-        summary: formatAvailabilitySummary(contract, calendar),
+        availability,
+        summary: formatAvailabilitySummary(contract, availability),
       },
       null,
       2,
@@ -300,6 +320,56 @@ async function handleAuth(): Promise<{
   return textResult(lines.join("\n"));
 }
 
+async function handleDigest(args: Record<string, unknown>) {
+  const client = await getClient();
+  if (!client) {
+    return errorResult("Not authenticated with HeadsDown. Run the headsdown_auth tool first.");
+  }
+
+  const latest = typeof args.latest === "number" ? args.latest : 20;
+  const summaries = await client.listDigestSummaries({ latest });
+
+  if (summaries.length === 0) {
+    return textResult(
+      JSON.stringify(
+        {
+          summaries: [],
+          message: "No digest entries. Nothing arrived while you were in focus mode.",
+        },
+        null,
+        2,
+      ),
+    );
+  }
+
+  const formatted = summaries.map((s: DigestSummary) => ({
+    id: s.id,
+    from: s.actorLabel,
+    source: s.sourceType,
+    action: s.action,
+    channel: s.channelRef,
+    count: s.entryCount,
+    firstAt: s.firstEventAt,
+    lastAt: s.lastEventAt,
+    events: s.events.map((e) => ({
+      description: e.description,
+      at: e.insertedAt,
+    })),
+  }));
+
+  return textResult(
+    JSON.stringify(
+      {
+        summaries: formatted,
+        total: summaries.length,
+        message: `${summaries.length} digest ${summaries.length === 1 ? "summary" : "summaries"} from your last focus session.`,
+      },
+      null,
+      2,
+    ),
+  );
+}
+
 async function handleReport(args: Record<string, unknown>) {
   const outcome = args.outcome;
   if (!outcome || typeof outcome !== "string") {
@@ -356,7 +426,7 @@ async function getClient(): Promise<HeadsDownClient | null> {
   }
 }
 
-function formatAvailabilitySummary(contract: Contract | null, calendar: Calendar): string {
+function formatAvailabilitySummary(contract: Contract | null, availability: ScheduleResolution): string {
   const parts: string[] = [];
 
   if (!contract) {
@@ -378,15 +448,26 @@ function formatAvailabilitySummary(contract: Contract | null, calendar: Calendar
       }
     }
 
-    if (contract.afk) parts.push("User is AFK (away from keyboard)");
     if (contract.lock) parts.push("Status is locked (user does not want changes)");
     if (contract.autoRespond) parts.push("Auto-respond is enabled");
   }
 
-  if (calendar.offHours) {
-    parts.push(`Currently off-hours. Next workday: ${calendar.nextWorkday}`);
-  } else if (calendar.workHours) {
-    parts.push(`Work hours active (${calendar.day}). Day ends at ${calendar.endsAt}`);
+  if (availability.inReachableHours) {
+    parts.push("Currently in available hours.");
+  } else {
+    parts.push("Currently outside available hours.");
+  }
+
+  if (availability.activeWindow) {
+    parts.push(`Active availability window: ${availability.activeWindow.label} (${availability.activeWindow.mode})`);
+  }
+
+  if (availability.nextWindow) {
+    parts.push(`Next availability window: ${availability.nextWindow.label} (${availability.nextWindow.mode})`);
+  }
+
+  if (availability.nextTransitionAt) {
+    parts.push(`Next availability transition at: ${availability.nextTransitionAt}`);
   }
 
   return parts.join("\n");
