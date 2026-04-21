@@ -1,12 +1,14 @@
 # headsdown-claude
 
-[HeadsDown](https://headsdown.app) availability plugin for Claude Code. Gives Claude awareness of your focus mode, availability state, and availability before it starts tasks.
+[HeadsDown](https://headsdown.app) availability plugin for Claude Code. Gives Claude awareness of your focus mode, schedule, and availability before it starts tasks — and keeps it aware throughout.
 
 When installed, Claude will:
-1. **Know your availability from the start** via a SessionStart hook that injects your current mode into context
-2. **Check before starting work** via a skill that teaches Claude to submit task proposals
-3. **Respect your focus time** by scoping work appropriately or deferring when you're busy
-4. **Show what you missed** via a digest of notifications that arrived during focus mode
+1. **Know your availability from the start** via a SessionStart hook that injects your current mode, active window, time remaining, upcoming transitions, and wrap-up guidance
+2. **Check before starting work** via a skill that teaches Claude to submit task proposals for verdict
+3. **Respect your focus time** by scoping work appropriately, deferring when you're busy, and producing handoff notes when time runs out
+4. **Track scope during work** via a PostToolUse hook that counts file modifications and warns when edits outrun the approved estimate
+5. **Survive context compaction** via a PreCompact hook that preserves proposal context so Claude can resume cleanly after the context window is rebuilt
+6. **Show what you missed** via a digest of notifications that arrived during focus mode, with offers to queue actionable items as follow-up proposals
 
 ## Install
 
@@ -49,7 +51,15 @@ This starts a Device Flow: you visit a URL, enter a code, and the API key is sav
 
 ### SessionStart Hook
 
-Every time Claude Code starts a session, the hook calls the HeadsDown API and injects your current availability into Claude's context. Claude knows your mode, status, and availability state before you say anything. If you're not authenticated or the API is unreachable, the hook exits silently (no disruption).
+Every time Claude Code starts a session, the hook injects your current availability into Claude's context before you say anything:
+
+- Current mode, status text, and time remaining
+- Whether you're in available hours and which window is active
+- Wrap-up execution guidance (when near a deadline)
+- Upcoming window transition warning if one is within 60 minutes (e.g., "Work hours end in 45 minutes — wrap-up threshold at 15 minutes")
+- Pending digest count if notifications arrived during your last focus session
+
+If you're not authenticated or the API is unreachable, the hook exits silently (no disruption).
 
 ### PreToolUse Hook (Write/Edit)
 
@@ -63,7 +73,24 @@ Before Claude writes or edits any file, the hook checks your current mode:
 | **limited** | Allow, but remind Claude to keep changes small and focused. |
 | **offline** | Ask the user for explicit permission. All changes should be deferred. |
 
-This is the enforcement layer. The skill suggests checking availability; this hook requires it.
+Behavior is controlled by trust level (see [Trust levels](#trust-levels) below).
+
+### PostToolUse Hook (Write/Edit)
+
+After each successful file write or edit, the hook:
+
+- Increments a per-session file modification counter (keyed on `CLAUDE_SESSION_ID`)
+- Emits a system message noting the running count: "[HeadsDown] 4 file(s) modified this session."
+- If an approved proposal exists and actual edits exceed the estimated file count by more than 50%, warns Claude to re-evaluate scope and re-propose before continuing
+
+### PreCompact Hook
+
+Before Claude Code compacts the context window, the hook injects a system message with:
+
+- The active approved proposal description and estimated scope
+- The current execution policy (wrap-up guidance)
+
+This allows Claude to include in-progress context in its compaction summary so it can resume the task cleanly after the context is rebuilt. Exits silently if no proposal is active.
 
 ### `/headsdown` Command
 
@@ -136,6 +163,27 @@ Seven tools registered via the plugin's MCP server:
 
 **`headsdown_auth`** - Authenticate via Device Flow.
 
+## Trust levels
+
+Control how strictly the PreToolUse hook enforces availability. Set in your plugin config:
+
+```json
+{
+  "headsdown": {
+    "trustLevel": "advisory",
+    "sensitivePaths": [".env", "credentials.json", "secrets/**"]
+  }
+}
+```
+
+| Level | Behavior |
+|-------|----------|
+| `advisory` (default) | Warns Claude; only blocks writes when locked or offline |
+| `active` | Auto-approves writes when an approved proposal exists; warns otherwise |
+| `guarded` | Requires an approved proposal before any write in busy/limited/offline modes |
+
+Sensitive path patterns always force an explicit permission prompt regardless of trust level.
+
 ## How It Works
 
 ```
@@ -172,14 +220,16 @@ headsdown-claude/
 ├── hooks/
 │   ├── hooks.json            # Hook configuration
 │   ├── session-start.sh      # Injects availability at session start
-│   └── check-availability.sh # Gates file modifications by mode
+│   ├── check-availability.sh # Gates file modifications by mode (PreToolUse)
+│   ├── post-tool-use.sh      # Tracks file modification count (PostToolUse)
+│   └── pre-compact.sh        # Preserves proposal context before compaction
 ├── .mcp.json                 # MCP server config
 ├── src/
 │   ├── index.ts              # MCP server entry point
 │   ├── server.ts             # Tool handlers
 │   └── cli.ts                # Lightweight CLI for hooks/commands
 ├── test/
-│   └── server.test.ts        # 47 tests
+│   └── server.test.ts        # 82 tests
 ├── package.json
 └── README.md
 ```
