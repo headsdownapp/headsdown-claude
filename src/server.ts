@@ -1,5 +1,6 @@
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { CallToolRequestSchema, ListToolsRequestSchema } from "@modelcontextprotocol/sdk/types.js";
+import * as HeadsDownSDK from "@headsdown/sdk";
 import {
   HeadsDownClient,
   CredentialStore,
@@ -23,6 +24,7 @@ import type {
   DigestSummary,
   ProposalInput,
   ScheduleResolution,
+  Verdict,
 } from "@headsdown/sdk";
 
 const proposalState = new ProposalStateStore();
@@ -372,7 +374,10 @@ async function handleStatus() {
 
   const actorClient = withActorContext(client, "headsdown_status");
   const { contract, schedule: availability } = await actorClient.getAvailability();
-  const wrapUpInstruction = buildWrapUpInstruction(availability.wrapUpGuidance);
+  const wrapUpInstruction = resolveExecutionInstruction({
+    contract,
+    schedule: availability,
+  });
 
   return textResult(
     JSON.stringify(
@@ -451,7 +456,13 @@ async function handlePropose(args: Record<string, unknown>) {
       ? "The task was approved. Proceed with the work as described."
       : "The task was deferred. Inform the user and suggest postponing or reducing " +
         "scope based on the reason provided.";
-  const wrapUpInstruction = buildWrapUpInstruction(verdict.wrapUpGuidance);
+  const wrapUpInstruction = resolveExecutionInstruction({
+    verdict: {
+      decision: verdict.decision,
+      reason: verdict.reason,
+      wrapUpGuidance: verdict.wrapUpGuidance,
+    },
+  });
 
   return textResult(
     JSON.stringify(
@@ -772,18 +783,27 @@ function parseDeliveryMode(value: unknown): ProposalInput["deliveryMode"] {
   return undefined;
 }
 
-function buildWrapUpInstruction(
-  guidance:
-    | {
-        active?: boolean;
-        selectedMode?: "auto" | "wrap_up" | "full_depth";
-        remainingMinutes?: number | null;
-        reason?: string;
-        hints?: string[];
-      }
-    | null
-    | undefined,
-): string | null {
+function resolveExecutionInstruction(input: {
+  contract?: Contract | null;
+  schedule?: ScheduleResolution | null;
+  verdict?: Pick<Verdict, "decision" | "reason" | "wrapUpGuidance"> | null;
+}): string | null {
+  const describeExecutionDirective = (
+    HeadsDownSDK as unknown as {
+      describeExecutionDirective?: (value: {
+        contract?: Contract | null;
+        schedule?: ScheduleResolution | null;
+        verdict?: Pick<Verdict, "decision" | "reason" | "wrapUpGuidance"> | null;
+      }) => { primaryDirective?: string };
+    }
+  ).describeExecutionDirective;
+
+  if (typeof describeExecutionDirective === "function") {
+    const directive = describeExecutionDirective(input);
+    return directive.primaryDirective ?? null;
+  }
+
+  const guidance = input.verdict?.wrapUpGuidance ?? input.schedule?.wrapUpGuidance;
   if (!guidance || !guidance.active) {
     return null;
   }
@@ -1034,7 +1054,10 @@ function formatAvailabilitySummary(
       parts.push(`Wrap-Up reason: ${reason}`);
     }
 
-    const instruction = buildWrapUpInstruction(availability.wrapUpGuidance);
+    const instruction = resolveExecutionInstruction({
+      contract,
+      schedule: availability,
+    });
     if (instruction) {
       parts.push(`Wrap-Up instruction: ${instruction}`);
     }
