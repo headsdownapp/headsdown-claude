@@ -232,6 +232,7 @@ describe("HeadsDown MCP Server", () => {
       expect(props.estimated_minutes.type).toBe("number");
       expect(props.scope_summary.type).toBe("string");
       expect(props.source_ref.type).toBe("string");
+      expect(props.delivery_mode.type).toBe("string");
     });
 
     it("digest tool has optional latest parameter", async () => {
@@ -505,6 +506,13 @@ describe("Plugin structure", () => {
     it("references headsdown_propose in system messages", async () => {
       const content = await readFile(scriptPath, "utf-8");
       expect(content).toContain("headsdown_propose");
+    });
+
+    it("mentions wrap-up guidance in status formatting", async () => {
+      const serverPath = join(import.meta.dirname, "..", "src", "server.ts");
+      const content = await readFile(serverPath, "utf-8");
+      expect(content).toContain("Wrap-Up guidance");
+      expect(content).toContain("wrapUpGuidance");
     });
 
     it("exits silently when CLI is not built", async () => {
