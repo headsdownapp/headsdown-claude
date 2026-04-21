@@ -1,32 +1,26 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { mkdtemp, rm, writeFile, readFile } from "node:fs/promises";
+import { mkdtemp, rm, readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { createServer } from "../src/server.js";
 
-// We need to mock the CredentialStore path so tests don't touch real credentials.
-// The SDK loads credentials from ~/.config/headsdown/credentials.json by default.
-// We'll set up temp credential files and point the SDK there via env var.
+// Tests must not depend on whatever credentials exist on the local machine.
+// Force the server to look for credentials in a temp path that does not exist.
 
 let tempDir: string;
 
 beforeEach(async () => {
   tempDir = await mkdtemp(join(tmpdir(), "hd-claude-test-"));
+  process.env.HEADSDOWN_CREDENTIALS_PATH = join(tempDir, "missing-credentials.json");
 });
 
 afterEach(async () => {
   await rm(tempDir, { recursive: true, force: true });
+  delete process.env.HEADSDOWN_CREDENTIALS_PATH;
   vi.restoreAllMocks();
 });
-
-/** Write a fake credentials file and mock HeadsDownClient.fromCredentials to use it. */
-async function writeCredentials(apiKey = "hd_test_key_abc123") {
-  const credPath = join(tempDir, "credentials.json");
-  await writeFile(credPath, JSON.stringify({ apiKey, createdAt: new Date().toISOString() }));
-  return credPath;
-}
 
 /**
  * Connect a test client to the MCP server via in-memory transport.
@@ -46,12 +40,20 @@ async function createTestClient() {
 
 describe("HeadsDown MCP Server", () => {
   describe("listTools", () => {
-    it("exposes five tools", async () => {
+    it("exposes seven tools", async () => {
       const client = await createTestClient();
       const result = await client.listTools();
 
       const names = result.tools.map((t) => t.name).sort();
-      expect(names).toEqual(["headsdown_auth", "headsdown_digest", "headsdown_propose", "headsdown_report", "headsdown_status"]);
+      expect(names).toEqual([
+        "headsdown_auth",
+        "headsdown_digest",
+        "headsdown_grants",
+        "headsdown_override",
+        "headsdown_propose",
+        "headsdown_report",
+        "headsdown_status",
+      ]);
     });
 
     it("headsdown_status has no required parameters", async () => {
@@ -135,6 +137,28 @@ describe("HeadsDown MCP Server", () => {
     it("returns auth error when not authenticated", async () => {
       const client = await createTestClient();
       const result = await client.callTool({ name: "headsdown_digest", arguments: {} });
+
+      const text = (result.content as Array<{ type: string; text: string }>)[0].text;
+      expect(text).toContain("Not authenticated");
+      expect(result.isError).toBe(true);
+    });
+  });
+
+  describe("headsdown_grants", () => {
+    it("returns auth error when not authenticated", async () => {
+      const client = await createTestClient();
+      const result = await client.callTool({ name: "headsdown_grants", arguments: {} });
+
+      const text = (result.content as Array<{ type: string; text: string }>)[0].text;
+      expect(text).toContain("Not authenticated");
+      expect(result.isError).toBe(true);
+    });
+  });
+
+  describe("headsdown_override", () => {
+    it("returns auth error when not authenticated", async () => {
+      const client = await createTestClient();
+      const result = await client.callTool({ name: "headsdown_override", arguments: {} });
 
       const text = (result.content as Array<{ type: string; text: string }>)[0].text;
       expect(text).toContain("Not authenticated");
@@ -228,6 +252,27 @@ describe("HeadsDown MCP Server", () => {
       expect(report?.inputSchema.required).toEqual(["outcome"]);
     });
 
+    it("grants tool has action parameter", async () => {
+      const client = await createTestClient();
+      const result = await client.listTools();
+      const grants = result.tools.find((t) => t.name === "headsdown_grants");
+      const props = grants?.inputSchema.properties as Record<string, { type: string }>;
+
+      expect(props.action.type).toBe("string");
+      expect(grants?.inputSchema.required).toEqual([]);
+    });
+
+    it("override tool has action and mode parameters", async () => {
+      const client = await createTestClient();
+      const result = await client.listTools();
+      const override = result.tools.find((t) => t.name === "headsdown_override");
+      const props = override?.inputSchema.properties as Record<string, { type: string }>;
+
+      expect(props.action.type).toBe("string");
+      expect(props.mode.type).toBe("string");
+      expect(override?.inputSchema.required).toEqual([]);
+    });
+
     it("auth tool has empty parameters", async () => {
       const client = await createTestClient();
       const result = await client.listTools();
@@ -286,6 +331,8 @@ describe("Plugin structure", () => {
       expect(content).toContain("headsdown_propose");
       expect(content).toContain("headsdown_digest");
       expect(content).toContain("headsdown_report");
+      expect(content).toContain("headsdown_grants");
+      expect(content).toContain("headsdown_override");
       expect(content).toContain("headsdown_auth");
     });
 

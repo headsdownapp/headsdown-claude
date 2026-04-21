@@ -9,11 +9,13 @@ This skill connects you to [HeadsDown](https://headsdown.app) so you're aware of
 
 ## MCP Tools Available
 
-This plugin provides five MCP tools. Use them via normal tool calls:
+This plugin provides seven MCP tools. Use them via normal tool calls:
 
 - **headsdown_status**: Check current availability (mode, availability state, time remaining)
 - **headsdown_propose**: Submit a task proposal for verdict (approved/deferred)
 - **headsdown_digest**: View notifications and messages that arrived during focus time
+- **headsdown_grants**: List/create/revoke delegation grants for actor-scoped permissions
+- **headsdown_override**: Get/set/clear temporary availability overrides
 - **headsdown_report**: Report task outcome for calibration (completed/failed/etc.)
 - **headsdown_auth**: Authenticate with HeadsDown via Device Flow
 
