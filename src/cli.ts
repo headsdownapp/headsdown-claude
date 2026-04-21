@@ -7,7 +7,7 @@
  */
 
 import { HeadsDownClient, ConfigStore, ProposalStateStore, AuthError } from "@headsdown/sdk";
-import type { Contract, ScheduleResolution } from "@headsdown/sdk";
+import type { ActorContext, Contract, ScheduleResolution } from "@headsdown/sdk";
 
 const command = process.argv[2];
 
@@ -31,7 +31,8 @@ async function main() {
 /** Full availability status as JSON. */
 async function status() {
   const client = await HeadsDownClient.fromCredentials();
-  const { contract, schedule: availability } = await client.getAvailability();
+  const actorClient = withActorContext(client, "cli-status");
+  const { contract, schedule: availability } = await actorClient.getAvailability();
 
   console.log(
     JSON.stringify(
@@ -49,7 +50,8 @@ async function status() {
 /** One-line summary suitable for system messages and command output. */
 async function summary() {
   const client = await HeadsDownClient.fromCredentials();
-  const { contract, schedule: availability } = await client.getAvailability();
+  const actorClient = withActorContext(client, "cli-summary");
+  const { contract, schedule: availability } = await actorClient.getAvailability();
   console.log(formatSummary(contract, availability));
 }
 
@@ -81,8 +83,20 @@ async function proposals() {
 /** Output the count of pending digest summaries. Used by session-start hook. */
 async function digestCount() {
   const client = await HeadsDownClient.fromCredentials();
-  const summaries = await client.listDigestSummaries({ latest: 50 });
+  const actorClient = withActorContext(client, "cli-digest-count");
+  const summaries = await actorClient.listDigestSummaries({ latest: 50 });
   console.log(String(summaries.length));
+}
+
+function withActorContext(client: HeadsDownClient, commandName: string): HeadsDownClient {
+  const actorContext: ActorContext = {
+    source: "claude-code",
+    agentId: `claude-code:${commandName}`,
+    sessionId: process.env.CLAUDE_SESSION_ID,
+    workspaceRef: process.cwd(),
+  };
+
+  return client.withActor(actorContext);
 }
 
 function formatSummary(contract: Contract | null, availability: ScheduleResolution): string {
@@ -113,11 +127,15 @@ function formatSummary(contract: Contract | null, availability: ScheduleResoluti
   parts.push(availability.inReachableHours ? "available hours" : "outside available hours");
 
   if (availability.activeWindow) {
-    parts.push(`active availability window: ${availability.activeWindow.label} (${availability.activeWindow.mode})`);
+    parts.push(
+      `active availability window: ${availability.activeWindow.label} (${availability.activeWindow.mode})`,
+    );
   }
 
   if (availability.nextWindow) {
-    parts.push(`next availability window: ${availability.nextWindow.label} (${availability.nextWindow.mode})`);
+    parts.push(
+      `next availability window: ${availability.nextWindow.label} (${availability.nextWindow.mode})`,
+    );
   }
 
   return parts.join(", ");

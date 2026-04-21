@@ -11,10 +11,90 @@ import {
   CalibrationTracker,
   ConfigStore,
 } from "@headsdown/sdk";
-import type { Contract, ScheduleResolution, ProposalInput, DeviceAuthorization, DigestSummary } from "@headsdown/sdk";
+import type {
+  ActorContext,
+  Contract,
+  DelegationGrant,
+  DelegationGrantFilterInput,
+  DelegationGrantInput,
+  DelegationGrantPermission,
+  DelegationGrantScope,
+  DeviceAuthorization,
+  DigestSummary,
+  ProposalInput,
+  ScheduleResolution,
+} from "@headsdown/sdk";
 
 const proposalState = new ProposalStateStore();
 let activeTracker: CalibrationTracker | null = null;
+
+interface AvailabilityOverride {
+  id: string;
+  mode: "online" | "busy" | "limited" | "offline";
+  reason: string | null;
+  source: string;
+  expiresAt: string;
+  cancelledAt: string | null;
+  expiredAt: string | null;
+  createdById: string;
+  cancelledById: string | null;
+  insertedAt: string;
+  updatedAt: string;
+}
+
+const ACTIVE_AVAILABILITY_OVERRIDE_QUERY = `
+  query ActiveAvailabilityOverride {
+    activeAvailabilityOverride {
+      id
+      mode
+      reason
+      source
+      expiresAt
+      cancelledAt
+      expiredAt
+      createdById
+      cancelledById
+      insertedAt
+      updatedAt
+    }
+  }
+`;
+
+const CREATE_AVAILABILITY_OVERRIDE_MUTATION = `
+  mutation CreateAvailabilityOverride($input: AvailabilityOverrideInput!) {
+    createAvailabilityOverride(input: $input) {
+      id
+      mode
+      reason
+      source
+      expiresAt
+      cancelledAt
+      expiredAt
+      createdById
+      cancelledById
+      insertedAt
+      updatedAt
+    }
+  }
+`;
+
+const CANCEL_AVAILABILITY_OVERRIDE_MUTATION = `
+  mutation CancelAvailabilityOverride($id: ID!, $reason: String, $source: String) {
+    cancelAvailabilityOverride(id: $id, reason: $reason, source: $source) {
+      id
+      mode
+      reason
+      source
+      expiresAt
+      cancelledAt
+      expiredAt
+      createdById
+      cancelledById
+      insertedAt
+      updatedAt
+    }
+  }
+`;
 
 export function createServer(): Server {
   const server = new Server(
@@ -73,6 +153,110 @@ export function createServer(): Server {
             },
           },
           required: ["description"],
+        },
+      },
+      {
+        name: "headsdown_grants",
+        description:
+          "Manage HeadsDown delegation grants for actor-scoped authorization. Supports listing active grants, " +
+          "listing/filtering, creating grants, and revoking grants.",
+        inputSchema: {
+          type: "object" as const,
+          properties: {
+            action: {
+              type: "string",
+              enum: ["list_active", "list", "create", "revoke", "revoke_many"],
+              description: "Action to run. Defaults to list_active.",
+            },
+            id: {
+              type: "string",
+              description: "Grant id for action='revoke'.",
+            },
+            scope: {
+              type: "string",
+              enum: ["session", "workspace", "agent"],
+              description: "Scope for create/list/revoke_many.",
+            },
+            session_id: {
+              type: "string",
+              description: "Session id for session scope.",
+            },
+            workspace_ref: {
+              type: "string",
+              description: "Workspace reference for workspace scope.",
+            },
+            agent_id: {
+              type: "string",
+              description: "Agent id for agent scope.",
+            },
+            permissions: {
+              type: "array",
+              items: {
+                type: "string",
+                enum: [
+                  "availability_override_create",
+                  "availability_override_cancel",
+                  "preset_apply",
+                ],
+              },
+              description: "Permissions for action='create'.",
+            },
+            duration_minutes: {
+              type: "number",
+              description: "Relative expiry in minutes for action='create'.",
+            },
+            expires_at: {
+              type: "string",
+              description: "Absolute ISO expiry for action='create'.",
+            },
+            source: {
+              type: "string",
+              description: "Audit source label for create/list/revoke_many.",
+            },
+            active: {
+              type: "boolean",
+              description: "Active filter for list/revoke_many.",
+            },
+          },
+          required: [],
+        },
+      },
+      {
+        name: "headsdown_override",
+        description:
+          "Manage temporary HeadsDown availability overrides. Supports getting active override, setting one, " +
+          "and clearing an active override.",
+        inputSchema: {
+          type: "object" as const,
+          properties: {
+            action: {
+              type: "string",
+              enum: ["get", "set", "clear"],
+              description: "Action to run. Defaults to get.",
+            },
+            id: {
+              type: "string",
+              description: "Override id for clear (optional; active override is used if omitted).",
+            },
+            mode: {
+              type: "string",
+              enum: ["online", "busy", "limited", "offline"],
+              description: "Override mode for action='set'.",
+            },
+            duration_minutes: {
+              type: "number",
+              description: "Relative expiry in minutes for action='set'.",
+            },
+            expires_at: {
+              type: "string",
+              description: "Absolute ISO expiry for action='set'.",
+            },
+            reason: {
+              type: "string",
+              description: "Optional reason for set/clear.",
+            },
+          },
+          required: [],
         },
       },
       {
@@ -156,6 +340,10 @@ export function createServer(): Server {
           return await handleDigest((args ?? {}) as Record<string, unknown>);
         case "headsdown_report":
           return await handleReport((args ?? {}) as Record<string, unknown>);
+        case "headsdown_grants":
+          return await handleGrants((args ?? {}) as Record<string, unknown>);
+        case "headsdown_override":
+          return await handleOverride((args ?? {}) as Record<string, unknown>);
         default:
           return errorResult(`Unknown tool: ${name}`);
       }
@@ -177,7 +365,8 @@ async function handleStatus() {
     );
   }
 
-  const { contract, schedule: availability } = await client.getAvailability();
+  const actorClient = withActorContext(client, "headsdown_status");
+  const { contract, schedule: availability } = await actorClient.getAvailability();
 
   return textResult(
     JSON.stringify(
@@ -215,7 +404,8 @@ async function handlePropose(args: Record<string, unknown>) {
     sourceRef: typeof args.source_ref === "string" ? args.source_ref : undefined,
   };
 
-  const verdict = await client.submitProposal(input);
+  const actorClient = withActorContext(client, "headsdown_propose");
+  const verdict = await actorClient.submitProposal(input);
 
   // Record approved proposals so the PreToolUse hook can check state
   if (verdict.decision === "approved") {
@@ -236,7 +426,7 @@ async function handlePropose(args: Record<string, unknown>) {
           activeTracker.dispose();
           activeTracker = null;
         }
-        const tracker = new CalibrationTracker(client, verdict.proposalId, {
+        const tracker = new CalibrationTracker(actorClient, verdict.proposalId, {
           enabled: true,
         });
         tracker.start();
@@ -277,7 +467,8 @@ async function handleAuth(): Promise<{
   const existingClient = await getClient();
   if (existingClient) {
     try {
-      const profile = await existingClient.getProfile();
+      const actorClient = withActorContext(existingClient, "headsdown_auth");
+      const profile = await actorClient.getProfile();
       return textResult(
         `Already authenticated with HeadsDown as ${profile.name ?? profile.email}. ` +
           "Your API key is valid. No action needed.",
@@ -327,7 +518,8 @@ async function handleDigest(args: Record<string, unknown>) {
   }
 
   const latest = typeof args.latest === "number" ? args.latest : 20;
-  const summaries = await client.listDigestSummaries({ latest });
+  const actorClient = withActorContext(client, "headsdown_digest");
+  const summaries = await actorClient.listDigestSummaries({ latest });
 
   if (summaries.length === 0) {
     return textResult(
@@ -416,17 +608,291 @@ async function handleReport(args: Record<string, unknown>) {
   }
 }
 
+async function handleGrants(args: Record<string, unknown>) {
+  const client = await getClient();
+  if (!client) {
+    return errorResult("Not authenticated with HeadsDown. Run the headsdown_auth tool first.");
+  }
+
+  const actorClient = withActorContext(client, "headsdown_grants");
+  const action = typeof args.action === "string" ? args.action : "list_active";
+
+  if (action === "list_active") {
+    const grants = await actorClient.listActiveDelegationGrants();
+    return textResult(JSON.stringify({ grants }, null, 2));
+  }
+
+  if (action === "list") {
+    const filter = buildDelegationGrantFilterInput(args);
+    const hasFilter = Object.values(filter).some((value) => value !== undefined);
+    const grants = await actorClient.listDelegationGrants(hasFilter ? filter : undefined);
+    return textResult(JSON.stringify({ grants }, null, 2));
+  }
+
+  if (action === "create") {
+    if (typeof args.scope !== "string") {
+      return errorResult("The 'scope' parameter is required for action='create'.");
+    }
+
+    if (!Array.isArray(args.permissions) || args.permissions.length === 0) {
+      return errorResult("The 'permissions' parameter is required for action='create'.");
+    }
+
+    const input: DelegationGrantInput = {
+      scope: args.scope as DelegationGrantScope,
+      sessionId: typeof args.session_id === "string" ? args.session_id : undefined,
+      workspaceRef: typeof args.workspace_ref === "string" ? args.workspace_ref : undefined,
+      agentId: typeof args.agent_id === "string" ? args.agent_id : undefined,
+      permissions: args.permissions as DelegationGrantPermission[],
+      durationMinutes:
+        typeof args.duration_minutes === "number" ? args.duration_minutes : undefined,
+      expiresAt: typeof args.expires_at === "string" ? args.expires_at : undefined,
+      source: typeof args.source === "string" ? args.source : "claude-code",
+    };
+
+    const grant = await actorClient.createDelegationGrant(input);
+    return textResult(JSON.stringify({ grant }, null, 2));
+  }
+
+  if (action === "revoke") {
+    if (typeof args.id !== "string" || !args.id.trim()) {
+      return errorResult("The 'id' parameter is required for action='revoke'.");
+    }
+
+    const grant = await actorClient.revokeDelegationGrant(args.id);
+    return textResult(JSON.stringify({ grant }, null, 2));
+  }
+
+  if (action === "revoke_many") {
+    const filter = buildDelegationGrantFilterInput(args);
+    const hasFilter = Object.values(filter).some((value) => value !== undefined);
+    const result = await actorClient.revokeDelegationGrants(hasFilter ? filter : undefined);
+    return textResult(JSON.stringify({ result }, null, 2));
+  }
+
+  return errorResult(
+    "Invalid action. Must be one of: list_active, list, create, revoke, revoke_many.",
+  );
+}
+
+async function handleOverride(args: Record<string, unknown>) {
+  const client = await getClient();
+  if (!client) {
+    return errorResult("Not authenticated with HeadsDown. Run the headsdown_auth tool first.");
+  }
+
+  const actorClient = withActorContext(client, "headsdown_override");
+  const action = typeof args.action === "string" ? args.action : "get";
+
+  if (action === "get") {
+    const override = await getActiveAvailabilityOverrideCompat(actorClient);
+    return textResult(JSON.stringify({ override }, null, 2));
+  }
+
+  if (action === "set") {
+    if (typeof args.mode !== "string") {
+      return errorResult("The 'mode' parameter is required for action='set'.");
+    }
+
+    const override = await createAvailabilityOverrideCompat(actorClient, {
+      mode: args.mode as AvailabilityOverride["mode"],
+      durationMinutes:
+        typeof args.duration_minutes === "number" ? args.duration_minutes : undefined,
+      expiresAt: typeof args.expires_at === "string" ? args.expires_at : undefined,
+      reason: typeof args.reason === "string" ? args.reason : undefined,
+      source: "claude-code",
+    });
+
+    return textResult(JSON.stringify({ override }, null, 2));
+  }
+
+  if (action === "clear") {
+    const idArg = typeof args.id === "string" ? args.id : undefined;
+    const activeOverride = idArg ? null : await getActiveAvailabilityOverrideCompat(actorClient);
+    const targetId = idArg ?? activeOverride?.id;
+
+    if (!targetId) {
+      return textResult(
+        JSON.stringify({ override: null, message: "No active override to clear." }, null, 2),
+      );
+    }
+
+    const override = await cancelAvailabilityOverrideCompat(
+      actorClient,
+      targetId,
+      typeof args.reason === "string" ? args.reason : undefined,
+    );
+    return textResult(JSON.stringify({ override }, null, 2));
+  }
+
+  return errorResult("Invalid action. Must be one of: get, set, clear.");
+}
+
 // === Helpers ===
+
+function withActorContext(client: HeadsDownClient, toolName: string): HeadsDownClient {
+  const actorContext: ActorContext = {
+    source: "claude-code",
+    agentId: "claude-code",
+    sessionId: process.env.CLAUDE_SESSION_ID,
+    workspaceRef: process.cwd(),
+  };
+
+  if (toolName) {
+    actorContext.agentId = `claude-code:${toolName}`;
+  }
+
+  return client.withActor(actorContext);
+}
+
+function buildDelegationGrantFilterInput(
+  args: Record<string, unknown>,
+): DelegationGrantFilterInput {
+  return {
+    active: typeof args.active === "boolean" ? args.active : undefined,
+    scope: typeof args.scope === "string" ? (args.scope as DelegationGrantScope) : undefined,
+    sessionId: typeof args.session_id === "string" ? args.session_id : undefined,
+    workspaceRef: typeof args.workspace_ref === "string" ? args.workspace_ref : undefined,
+    agentId: typeof args.agent_id === "string" ? args.agent_id : undefined,
+    source: typeof args.source === "string" ? args.source : undefined,
+  };
+}
+
+function getLowLevelGraphQLClient(client: HeadsDownClient): {
+  request: (query: string, variables?: Record<string, unknown>) => Promise<Record<string, unknown>>;
+} | null {
+  const maybeGraphQL = (client as unknown as { graphql?: unknown }).graphql;
+  if (!maybeGraphQL || typeof maybeGraphQL !== "object") return null;
+
+  const request = (maybeGraphQL as { request?: unknown }).request;
+  if (typeof request !== "function") return null;
+
+  return {
+    request: request.bind(maybeGraphQL) as (
+      query: string,
+      variables?: Record<string, unknown>,
+    ) => Promise<Record<string, unknown>>,
+  };
+}
+
+type AvailabilityOverrideInput = {
+  mode: AvailabilityOverride["mode"];
+  durationMinutes?: number;
+  expiresAt?: string;
+  reason?: string;
+  source?: string;
+};
+
+async function createAvailabilityOverrideCompat(
+  client: HeadsDownClient,
+  input: AvailabilityOverrideInput,
+): Promise<AvailabilityOverride> {
+  const nativeMethod = (
+    client as unknown as {
+      createAvailabilityOverride?: (
+        value: AvailabilityOverrideInput,
+      ) => Promise<AvailabilityOverride>;
+    }
+  ).createAvailabilityOverride;
+
+  if (typeof nativeMethod === "function") {
+    return nativeMethod(input);
+  }
+
+  const graphql = getLowLevelGraphQLClient(client);
+  if (!graphql) {
+    throw new Error("Availability override APIs are unavailable in this @headsdown/sdk version.");
+  }
+
+  const data = await graphql.request(CREATE_AVAILABILITY_OVERRIDE_MUTATION, { input });
+  const override =
+    (data.createAvailabilityOverride as AvailabilityOverride | null | undefined) ?? null;
+  if (!override) {
+    throw new Error("HeadsDown API returned no availability override data.");
+  }
+
+  return override;
+}
+
+async function getActiveAvailabilityOverrideCompat(
+  client: HeadsDownClient,
+): Promise<AvailabilityOverride | null> {
+  const nativeMethod = (
+    client as unknown as {
+      getActiveAvailabilityOverride?: () => Promise<AvailabilityOverride | null>;
+    }
+  ).getActiveAvailabilityOverride;
+
+  if (typeof nativeMethod === "function") {
+    return nativeMethod();
+  }
+
+  const graphql = getLowLevelGraphQLClient(client);
+  if (!graphql) {
+    throw new Error("Availability override APIs are unavailable in this @headsdown/sdk version.");
+  }
+
+  const data = await graphql.request(ACTIVE_AVAILABILITY_OVERRIDE_QUERY);
+  return (data.activeAvailabilityOverride as AvailabilityOverride | null | undefined) ?? null;
+}
+
+async function cancelAvailabilityOverrideCompat(
+  client: HeadsDownClient,
+  id: string,
+  reason?: string,
+): Promise<AvailabilityOverride> {
+  const nativeMethod = (
+    client as unknown as {
+      cancelAvailabilityOverride?: (
+        value: string,
+        reason?: string,
+      ) => Promise<AvailabilityOverride>;
+    }
+  ).cancelAvailabilityOverride;
+
+  if (typeof nativeMethod === "function") {
+    return nativeMethod(id, reason);
+  }
+
+  const graphql = getLowLevelGraphQLClient(client);
+  if (!graphql) {
+    throw new Error("Availability override APIs are unavailable in this @headsdown/sdk version.");
+  }
+
+  const data = await graphql.request(CANCEL_AVAILABILITY_OVERRIDE_MUTATION, {
+    id,
+    reason,
+    source: "claude-code",
+  });
+  const override =
+    (data.cancelAvailabilityOverride as AvailabilityOverride | null | undefined) ?? null;
+  if (!override) {
+    throw new Error("HeadsDown API returned no cancelled override data.");
+  }
+
+  return override;
+}
+
+function getCredentialsPathOverride(): string | undefined {
+  const value = process.env.HEADSDOWN_CREDENTIALS_PATH;
+  if (!value) return undefined;
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : undefined;
+}
 
 async function getClient(): Promise<HeadsDownClient | null> {
   try {
-    return await HeadsDownClient.fromCredentials();
+    const credentialsPath = getCredentialsPathOverride();
+    return await HeadsDownClient.fromCredentials(credentialsPath ? { credentialsPath } : undefined);
   } catch {
     return null;
   }
 }
 
-function formatAvailabilitySummary(contract: Contract | null, availability: ScheduleResolution): string {
+function formatAvailabilitySummary(
+  contract: Contract | null,
+  availability: ScheduleResolution,
+): string {
   const parts: string[] = [];
 
   if (!contract) {
@@ -459,11 +925,15 @@ function formatAvailabilitySummary(contract: Contract | null, availability: Sche
   }
 
   if (availability.activeWindow) {
-    parts.push(`Active availability window: ${availability.activeWindow.label} (${availability.activeWindow.mode})`);
+    parts.push(
+      `Active availability window: ${availability.activeWindow.label} (${availability.activeWindow.mode})`,
+    );
   }
 
   if (availability.nextWindow) {
-    parts.push(`Next availability window: ${availability.nextWindow.label} (${availability.nextWindow.mode})`);
+    parts.push(
+      `Next availability window: ${availability.nextWindow.label} (${availability.nextWindow.mode})`,
+    );
   }
 
   if (availability.nextTransitionAt) {

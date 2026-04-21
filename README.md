@@ -77,7 +77,7 @@ A SKILL.md that teaches Claude when and how to check availability. Claude loads 
 
 ### MCP Tools
 
-Five tools registered via the plugin's MCP server:
+Seven tools registered via the plugin's MCP server:
 
 **`headsdown_status`** - Check your current availability. Returns mode, status message, time remaining, and availability state.
 
@@ -98,6 +98,33 @@ Five tools registered via the plugin's MCP server:
 | Parameter | Required | Description |
 |-----------|----------|-------------|
 | `latest` | No | Limit to N most recent summaries (default: 20) |
+
+**`headsdown_grants`** - List/create/revoke delegation grants for actor-scoped authorization.
+
+| Parameter | Required | Description |
+|-----------|----------|-------------|
+| `action` | No | list_active, list, create, revoke, revoke_many (default: list_active) |
+| `id` | No | Grant id for revoke |
+| `scope` | No | session, workspace, agent |
+| `session_id` | No | Session identifier |
+| `workspace_ref` | No | Workspace reference |
+| `agent_id` | No | Agent identifier |
+| `permissions` | No | availability_override_create, availability_override_cancel, preset_apply |
+| `duration_minutes` | No | Relative expiry for create |
+| `expires_at` | No | Absolute expiry for create |
+| `source` | No | Audit source label |
+| `active` | No | Active filter for list/revoke_many |
+
+**`headsdown_override`** - Get/set/clear temporary availability overrides.
+
+| Parameter | Required | Description |
+|-----------|----------|-------------|
+| `action` | No | get, set, clear (default: get) |
+| `id` | No | Override id for clear |
+| `mode` | No | online, busy, limited, offline (required for set) |
+| `duration_minutes` | No | Relative expiry for set |
+| `expires_at` | No | Absolute expiry for set |
+| `reason` | No | Optional reason for set/clear |
 
 **`headsdown_report`** - Report the outcome of a task approved via `headsdown_propose`. Helps HeadsDown calibrate future verdicts.
 
@@ -168,7 +195,7 @@ headsdown-claude/
 
 This plugin is a thin wrapper around the [HeadsDown SDK](https://github.com/headsdownapp/headsdown-sdk). It sends requests only to the HeadsDown API.
 
-**What is sent:** Task descriptions and scope estimates (when you submit proposals), your API key for authentication.
+**What is sent:** Task descriptions and scope estimates (when you submit proposals), your API key for authentication, and actor context metadata (`source`, `agentId`, `sessionId`, `workspaceRef`) for delegated authorization paths.
 
 **What is received:** Your availability status, availability state, task verdicts, and digest summaries (aggregated notifications).
 
