@@ -372,6 +372,7 @@ async function handleStatus() {
 
   const actorClient = withActorContext(client, "headsdown_status");
   const { contract, schedule: availability } = await actorClient.getAvailability();
+  const wrapUpInstruction = buildWrapUpInstruction(availability.wrapUpGuidance);
 
   return textResult(
     JSON.stringify(
@@ -380,6 +381,7 @@ async function handleStatus() {
         contract,
         availability,
         summary: formatAvailabilitySummary(contract, availability),
+        wrapUpInstruction,
       },
       null,
       2,
@@ -449,6 +451,7 @@ async function handlePropose(args: Record<string, unknown>) {
       ? "The task was approved. Proceed with the work as described."
       : "The task was deferred. Inform the user and suggest postponing or reducing " +
         "scope based on the reason provided.";
+  const wrapUpInstruction = buildWrapUpInstruction(verdict.wrapUpGuidance);
 
   return textResult(
     JSON.stringify(
@@ -459,6 +462,7 @@ async function handlePropose(args: Record<string, unknown>) {
         proposalId: verdict.proposalId,
         evaluatedAt: verdict.evaluatedAt,
         wrapUpGuidance: verdict.wrapUpGuidance,
+        wrapUpInstruction,
       },
       null,
       2,
@@ -768,6 +772,53 @@ function parseDeliveryMode(value: unknown): ProposalInput["deliveryMode"] {
   return undefined;
 }
 
+function buildWrapUpInstruction(
+  guidance:
+    | {
+        active?: boolean;
+        selectedMode?: "auto" | "wrap_up" | "full_depth";
+        remainingMinutes?: number | null;
+        reason?: string;
+        hints?: string[];
+      }
+    | null
+    | undefined,
+): string | null {
+  if (!guidance || !guidance.active) {
+    return null;
+  }
+
+  let instruction = "";
+  if (guidance.selectedMode === "wrap_up") {
+    instruction =
+      "Execution policy for this task: keep scope minimal, avoid starting new refactors, finish the current slice cleanly, and include clear handoff notes for deferred work.";
+  } else if (guidance.selectedMode === "full_depth") {
+    instruction =
+      "Execution policy for this task: proceed with full implementation depth, include robust validation and tests, and do not shrink scope only because a deadline is near.";
+  } else {
+    instruction =
+      "Execution policy for this task: follow the provided context to balance scope and depth, stay focused on the requested outcome, and avoid unnecessary expansion.";
+  }
+
+  const context: string[] = [];
+
+  if (typeof guidance.remainingMinutes === "number") {
+    context.push(
+      `About ${guidance.remainingMinutes} minutes remain before the attention deadline.`,
+    );
+  }
+
+  if (guidance.reason) {
+    context.push(`Reason: ${guidance.reason}`);
+  }
+
+  if (guidance.hints && guidance.hints.length > 0) {
+    context.push(`Hints: ${guidance.hints.join("; ")}`);
+  }
+
+  return [instruction, ...context].join(" ");
+}
+
 function isSessionTokenOnlyGrantError(message: string): boolean {
   return (
     message.includes("session-token auth path") ||
@@ -981,6 +1032,11 @@ function formatAvailabilitySummary(
     parts.push(`Wrap-Up guidance: ${timing} (${mode})`);
     if (reason) {
       parts.push(`Wrap-Up reason: ${reason}`);
+    }
+
+    const instruction = buildWrapUpInstruction(availability.wrapUpGuidance);
+    if (instruction) {
+      parts.push(`Wrap-Up instruction: ${instruction}`);
     }
   }
 

@@ -21,6 +21,7 @@ if echo "$output" | jq -e . > /dev/null 2>&1; then
   mode=$(echo "$output" | jq -r '.contract.mode // "unknown"')
   status_text=$(echo "$output" | jq -r '.contract.statusText // empty')
   summary=$(echo "$output" | jq -r '.summary // empty')
+  wrap_up_instruction=$(echo "$output" | jq -r '.wrapUpInstruction // empty')
   in_reachable_hours=$(echo "$output" | jq -r '.availability.inReachableHours // false')
   active_window_label=$(echo "$output" | jq -r '.availability.activeWindow.label // empty')
 
@@ -48,6 +49,10 @@ if echo "$output" | jq -e . > /dev/null 2>&1; then
 
   if [ -n "$summary" ] && [ "$summary" != "null" ]; then
     context="$context ($summary)"
+  fi
+
+  if [ -n "$wrap_up_instruction" ] && [ "$wrap_up_instruction" != "null" ]; then
+    context="$context Execution guidance: $wrap_up_instruction"
   fi
 
   # Check for pending digest entries
