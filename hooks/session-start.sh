@@ -55,6 +55,26 @@ if echo "$output" | jq -e . > /dev/null 2>&1; then
     context="$context Execution guidance: $wrap_up_instruction"
   fi
 
+  # Check for imminent availability window transitions (within 60 minutes)
+  transition_json=$(node "$CLI" next-window 2>/dev/null) || transition_json="null"
+  if [ -n "$transition_json" ] && [ "$transition_json" != "null" ]; then
+    minutes_until=$(echo "$transition_json" | jq -r '.minutesUntil // empty')
+    next_label=$(echo "$transition_json" | jq -r '.nextWindowLabel // empty')
+    next_mode=$(echo "$transition_json" | jq -r '.nextWindowMode // empty')
+    wrap_threshold=$(echo "$transition_json" | jq -r '.wrapUpThresholdMinutes // empty')
+
+    if [ -n "$minutes_until" ] && [ "$minutes_until" != "null" ]; then
+      if [ -n "$next_label" ] && [ "$next_label" != "null" ]; then
+        context="$context Transition in ${minutes_until} minutes: next window is '${next_label}' (${next_mode})."
+      else
+        context="$context Availability window transition in ${minutes_until} minutes."
+      fi
+      if [ -n "$wrap_threshold" ] && [ "$wrap_threshold" != "null" ]; then
+        context="$context Wrap-up threshold is ${wrap_threshold} minutes before transition."
+      fi
+    fi
+  fi
+
   # Check for pending digest entries
   digest_count=$(node "$CLI" digest-count 2>/dev/null) || digest_count="0"
   if [ "$digest_count" != "0" ] && [ -n "$digest_count" ]; then

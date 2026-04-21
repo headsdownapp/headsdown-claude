@@ -1,3 +1,4 @@
+import { writeFile } from "node:fs/promises";
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { CallToolRequestSchema, ListToolsRequestSchema } from "@modelcontextprotocol/sdk/types.js";
 import * as HeadsDownSDK from "@headsdown/sdk";
@@ -428,6 +429,18 @@ async function handlePropose(args: Record<string, unknown>) {
       description: input.description,
       evaluatedAt: verdict.evaluatedAt,
     });
+
+    // Write companion meta file so hooks can access estimatedFiles for scope tracking
+    try {
+      const metaPath = proposalState.filePath.replace(/\.json$/, ".meta.json");
+      await writeFile(
+        metaPath,
+        JSON.stringify({ estimatedFiles: input.estimatedFiles ?? null }, null, 2),
+        { mode: 0o600 },
+      );
+    } catch {
+      // Non-critical: hook will skip scope comparison if meta is unavailable
+    }
 
     // Start calibration tracking for approved proposals
     try {

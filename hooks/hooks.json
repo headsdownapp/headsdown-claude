@@ -1,5 +1,5 @@
 {
-  "description": "HeadsDown availability hooks. Injects status at session start and checks availability before file modifications.",
+  "description": "HeadsDown availability hooks. Injects status at session start, checks availability before file modifications, tracks scope after edits, and preserves proposal context before compaction.",
   "hooks": {
     "SessionStart": [
       {
@@ -20,6 +20,30 @@
           {
             "type": "command",
             "command": "bash ${CLAUDE_PLUGIN_ROOT}/hooks/check-availability.sh",
+            "timeout": 10
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Write|Edit|MultiEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash ${CLAUDE_PLUGIN_ROOT}/hooks/post-tool-use.sh",
+            "timeout": 10
+          }
+        ]
+      }
+    ],
+    "PreCompact": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash ${CLAUDE_PLUGIN_ROOT}/hooks/pre-compact.sh",
             "timeout": 10
           }
         ]

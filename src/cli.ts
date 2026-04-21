@@ -6,6 +6,7 @@
  * hooks and commands run as shell scripts and can't call MCP tools directly.
  */
 
+import { readFile } from "node:fs/promises";
 import * as HeadsDownSDK from "@headsdown/sdk";
 import { HeadsDownClient, ConfigStore, ProposalStateStore, AuthError } from "@headsdown/sdk";
 import type { ActorContext, Contract, ScheduleResolution, Verdict } from "@headsdown/sdk";
@@ -24,6 +25,8 @@ async function main() {
       return await proposals();
     case "digest-count":
       return await digestCount();
+    case "next-window":
+      return await nextWindow();
     default:
       process.exit(1);
   }
@@ -79,10 +82,56 @@ async function proposals() {
 
   const latest = await store.getLatestApproved();
   if (latest) {
-    console.log(JSON.stringify(latest, null, 2));
+    // Try to read companion meta file written by the MCP server, which preserves
+    // estimatedFiles for use by the PostToolUse scope-tracking hook.
+    const metaPath = store.filePath.replace(/\.json$/, ".meta.json");
+    let meta: Record<string, unknown> = {};
+    try {
+      const metaRaw = await readFile(metaPath, "utf-8");
+      meta = JSON.parse(metaRaw) as Record<string, unknown>;
+    } catch {
+      // No meta file — proposal was approved before this feature or meta was not written
+    }
+    console.log(JSON.stringify({ ...latest, ...meta }, null, 2));
   } else {
     console.log(JSON.stringify(null));
   }
+}
+
+/**
+ * Output upcoming window transition info as JSON. Used by session-start hook.
+ * Returns { nextWindowLabel, nextWindowMode, minutesUntil, wrapUpThresholdMinutes }
+ * if the next transition is within 60 minutes, or null if no imminent transition.
+ */
+async function nextWindow() {
+  const client = await HeadsDownClient.fromCredentials();
+  const actorClient = withActorContext(client, "cli-next-window");
+  const { schedule: availability } = await actorClient.getAvailability();
+
+  const { nextTransitionAt, nextWindow: next, wrapUpGuidance } = availability;
+
+  if (!nextTransitionAt) {
+    console.log(JSON.stringify(null));
+    return;
+  }
+
+  const transitionAt = new Date(nextTransitionAt);
+  const now = new Date();
+  const minutesUntil = Math.round((transitionAt.getTime() - now.getTime()) / 60000);
+
+  if (minutesUntil < 0 || minutesUntil > 60) {
+    console.log(JSON.stringify(null));
+    return;
+  }
+
+  console.log(
+    JSON.stringify({
+      nextWindowLabel: next?.label ?? null,
+      nextWindowMode: next?.mode ?? null,
+      minutesUntil,
+      wrapUpThresholdMinutes: wrapUpGuidance.thresholdMinutes ?? null,
+    }),
+  );
 }
 
 /** Output the count of pending digest summaries. Used by session-start hook. */

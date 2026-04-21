@@ -354,6 +354,60 @@ describe("Plugin structure", () => {
       expect(content).toContain("approved");
       expect(content).toContain("deferred");
     });
+
+    it("documents schedule/cron availability awareness", async () => {
+      const skillPath = join(import.meta.dirname, "..", "skills", "headsdown", "SKILL.md");
+      const content = await readFile(skillPath, "utf-8");
+
+      expect(content).toContain("schedule");
+      expect(content).toContain("online");
+      // Should warn about scheduling during busy/offline
+      expect(content).toContain("busy");
+    });
+
+    it("documents mid-task scope escalation", async () => {
+      const skillPath = join(import.meta.dirname, "..", "skills", "headsdown", "SKILL.md");
+      const content = await readFile(skillPath, "utf-8");
+
+      expect(content).toContain("scope");
+      expect(content).toContain("re-propose");
+      expect(content).toContain("estimated_files");
+    });
+
+    it("documents wrap-up handoff notes", async () => {
+      const skillPath = join(import.meta.dirname, "..", "skills", "headsdown", "SKILL.md");
+      const content = await readFile(skillPath, "utf-8");
+
+      expect(content).toContain("wrap_up");
+      expect(content).toContain("Completed:");
+      expect(content).toContain("Deferred:");
+      expect(content).toContain("Pick up here:");
+    });
+
+    it("documents digest follow-up proposal pipeline", async () => {
+      const skillPath = join(import.meta.dirname, "..", "skills", "headsdown", "SKILL.md");
+      const content = await readFile(skillPath, "utf-8");
+
+      expect(content).toContain("follow-up");
+      expect(content).toContain("actionable");
+    });
+
+    it("documents proactive session-end outcome reporting", async () => {
+      const skillPath = join(import.meta.dirname, "..", "skills", "headsdown", "SKILL.md");
+      const content = await readFile(skillPath, "utf-8");
+
+      expect(content).toContain("session is ending");
+      expect(content).toContain("headsdown_report");
+    });
+
+    it("documents subagent delegation grant verification", async () => {
+      const skillPath = join(import.meta.dirname, "..", "skills", "headsdown", "SKILL.md");
+      const content = await readFile(skillPath, "utf-8");
+
+      expect(content).toContain("subagent");
+      expect(content).toContain("list_active");
+      expect(content).toContain("headsdown_grants");
+    });
   });
 
   describe(".mcp.json", () => {
@@ -404,6 +458,36 @@ describe("Plugin structure", () => {
       expect(preToolUse.hooks[0].command).toContain("${CLAUDE_PLUGIN_ROOT}");
       expect(preToolUse.hooks[0].timeout).toBeLessThanOrEqual(10);
     });
+
+    it("PostToolUse hook targets Write, Edit, and MultiEdit", async () => {
+      const hooksPath = join(import.meta.dirname, "..", "hooks", "hooks.json");
+      const raw = await readFile(hooksPath, "utf-8");
+      const config = JSON.parse(raw);
+
+      expect(config.hooks.PostToolUse).toBeInstanceOf(Array);
+      expect(config.hooks.PostToolUse).toHaveLength(1);
+
+      const postToolUse = config.hooks.PostToolUse[0];
+      expect(postToolUse.matcher).toContain("Write");
+      expect(postToolUse.matcher).toContain("Edit");
+      expect(postToolUse.matcher).toContain("MultiEdit");
+      expect(postToolUse.hooks[0].command).toContain("${CLAUDE_PLUGIN_ROOT}");
+      expect(postToolUse.hooks[0].timeout).toBeLessThanOrEqual(10);
+    });
+
+    it("PreCompact hook uses wildcard matcher and CLAUDE_PLUGIN_ROOT", async () => {
+      const hooksPath = join(import.meta.dirname, "..", "hooks", "hooks.json");
+      const raw = await readFile(hooksPath, "utf-8");
+      const config = JSON.parse(raw);
+
+      expect(config.hooks.PreCompact).toBeInstanceOf(Array);
+      expect(config.hooks.PreCompact).toHaveLength(1);
+
+      const preCompact = config.hooks.PreCompact[0];
+      expect(preCompact.matcher).toBe("*");
+      expect(preCompact.hooks[0].command).toContain("${CLAUDE_PLUGIN_ROOT}");
+      expect(preCompact.hooks[0].timeout).toBeLessThanOrEqual(10);
+    });
   });
 
   describe("hooks/session-start.sh", () => {
@@ -432,6 +516,21 @@ describe("Plugin structure", () => {
       const content = await readFile(scriptPath, "utf-8");
       expect(content).toContain("wrap_up_instruction");
       expect(content).toContain("Execution guidance:");
+    });
+
+    it("injects upcoming window transition warning when within 60 minutes", async () => {
+      const scriptPath = join(import.meta.dirname, "..", "hooks", "session-start.sh");
+      const content = await readFile(scriptPath, "utf-8");
+      expect(content).toContain("next-window");
+      expect(content).toContain("minutes_until");
+      expect(content).toContain("Transition in");
+    });
+
+    it("includes wrap-up threshold in transition warning", async () => {
+      const scriptPath = join(import.meta.dirname, "..", "hooks", "session-start.sh");
+      const content = await readFile(scriptPath, "utf-8");
+      expect(content).toContain("wrap_threshold");
+      expect(content).toContain("Wrap-up threshold is");
     });
 
     it("exits cleanly when CLI is not built", async () => {
@@ -534,6 +633,127 @@ describe("Plugin structure", () => {
       for (const msg of systemMessages) {
         expect(msg).toContain("[HeadsDown]");
       }
+    });
+  });
+
+  describe("hooks/pre-compact.sh", () => {
+    const scriptPath = join(import.meta.dirname, "..", "hooks", "pre-compact.sh");
+
+    it("exists and is executable", async () => {
+      const { stat } = await import("node:fs/promises");
+      const stats = await stat(scriptPath);
+      expect(stats.mode & 0o100).toBeTruthy();
+    });
+
+    it("uses set -euo pipefail for safety", async () => {
+      const content = await readFile(scriptPath, "utf-8");
+      expect(content).toContain("set -euo pipefail");
+    });
+
+    it("exits cleanly when CLI is not built", async () => {
+      const content = await readFile(scriptPath, "utf-8");
+      expect(content).toContain('if [ ! -f "$CLI" ]');
+      expect(content).toContain("exit 0");
+    });
+
+    it("reads proposal state and wrap-up instruction", async () => {
+      const content = await readFile(scriptPath, "utf-8");
+      expect(content).toContain("proposals");
+      expect(content).toContain("wrapUpInstruction");
+      expect(content).toContain("wrap_up_instruction");
+    });
+
+    it("exits silently when no proposal and no wrap-up instruction", async () => {
+      const content = await readFile(scriptPath, "utf-8");
+      expect(content).toContain("exit 0");
+      // The silent exit should come after checking both are empty
+      expect(content).toContain('[ -z "$proposal_desc" ] && [ -z "$wrap_up_instruction" ]');
+    });
+
+    it("injects proposal description into system message", async () => {
+      const content = await readFile(scriptPath, "utf-8");
+      expect(content).toContain("approved proposal");
+      expect(content).toContain("proposal_desc");
+    });
+
+    it("includes estimated files count when present", async () => {
+      const content = await readFile(scriptPath, "utf-8");
+      expect(content).toContain("estimated_files");
+      expect(content).toContain("estimated");
+    });
+
+    it("instructs Claude to include context in compaction summary", async () => {
+      const content = await readFile(scriptPath, "utf-8");
+      expect(content).toContain("compaction summary");
+    });
+
+    it("uses [HeadsDown] prefix in system messages", async () => {
+      const content = await readFile(scriptPath, "utf-8");
+      expect(content).toContain("[HeadsDown]");
+    });
+  });
+
+  describe("hooks/post-tool-use.sh", () => {
+    const scriptPath = join(import.meta.dirname, "..", "hooks", "post-tool-use.sh");
+
+    it("exists and is executable", async () => {
+      const { stat } = await import("node:fs/promises");
+      const stats = await stat(scriptPath);
+      expect(stats.mode & 0o100).toBeTruthy();
+    });
+
+    it("uses set -euo pipefail for safety", async () => {
+      const content = await readFile(scriptPath, "utf-8");
+      expect(content).toContain("set -euo pipefail");
+    });
+
+    it("exits cleanly when CLI is not built", async () => {
+      const content = await readFile(scriptPath, "utf-8");
+      expect(content).toContain('if [ ! -f "$CLI" ]');
+      expect(content).toContain("exit 0");
+    });
+
+    it("uses CLAUDE_SESSION_ID for the counter file", async () => {
+      const content = await readFile(scriptPath, "utf-8");
+      expect(content).toContain("CLAUDE_SESSION_ID");
+      expect(content).toContain("COUNTER_FILE");
+      expect(content).toContain("/tmp/headsdown-file-count-");
+    });
+
+    it("falls back to 'default' when CLAUDE_SESSION_ID is unset", async () => {
+      const content = await readFile(scriptPath, "utf-8");
+      expect(content).toContain("CLAUDE_SESSION_ID:-default");
+    });
+
+    it("increments counter and reports running count", async () => {
+      const content = await readFile(scriptPath, "utf-8");
+      expect(content).toContain("count=$((current + 1))");
+      expect(content).toContain("modified this session");
+    });
+
+    it("checks proposal estimatedFiles for scope comparison", async () => {
+      const content = await readFile(scriptPath, "utf-8");
+      expect(content).toContain("estimatedFiles");
+      expect(content).toContain("estimated_files");
+    });
+
+    it("warns when file count exceeds estimate by more than 50%", async () => {
+      const content = await readFile(scriptPath, "utf-8");
+      // 50% threshold: estimated * 3 / 2
+      expect(content).toContain("estimated_files * 3 / 2");
+      expect(content).toContain("Scope warning");
+      expect(content).toContain("headsdown_propose");
+    });
+
+    it("skips scope warning when no estimatedFiles in proposal", async () => {
+      const content = await readFile(scriptPath, "utf-8");
+      // Guard ensures we only compare when estimated_files > 0
+      expect(content).toContain('[ "$estimated_files" -gt 0 ]');
+    });
+
+    it("uses [HeadsDown] prefix in system messages", async () => {
+      const content = await readFile(scriptPath, "utf-8");
+      expect(content).toContain("[HeadsDown]");
     });
   });
 
