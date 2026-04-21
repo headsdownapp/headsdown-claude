@@ -427,6 +427,13 @@ describe("Plugin structure", () => {
       expect(content).toContain("CLAUDE_PLUGIN_ROOT");
     });
 
+    it("propagates wrap-up instruction into session context", async () => {
+      const scriptPath = join(import.meta.dirname, "..", "hooks", "session-start.sh");
+      const content = await readFile(scriptPath, "utf-8");
+      expect(content).toContain("wrap_up_instruction");
+      expect(content).toContain("Execution guidance:");
+    });
+
     it("exits cleanly when CLI is not built", async () => {
       const scriptPath = join(import.meta.dirname, "..", "hooks", "session-start.sh");
       const content = await readFile(scriptPath, "utf-8");
@@ -513,6 +520,7 @@ describe("Plugin structure", () => {
       const content = await readFile(serverPath, "utf-8");
       expect(content).toContain("Wrap-Up guidance");
       expect(content).toContain("wrapUpGuidance");
+      expect(content).toContain("Execution policy for this task");
     });
 
     it("exits silently when CLI is not built", async () => {

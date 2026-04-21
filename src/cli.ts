@@ -40,6 +40,7 @@ async function status() {
         contract,
         availability,
         summary: formatSummary(contract, availability),
+        wrapUpInstruction: buildWrapUpInstruction(availability.wrapUpGuidance),
       },
       null,
       2,
@@ -88,6 +89,53 @@ async function digestCount() {
   console.log(String(summaries.length));
 }
 
+function buildWrapUpInstruction(
+  guidance:
+    | {
+        active?: boolean;
+        selectedMode?: "auto" | "wrap_up" | "full_depth";
+        remainingMinutes?: number | null;
+        reason?: string;
+        hints?: string[];
+      }
+    | null
+    | undefined,
+): string | null {
+  if (!guidance || !guidance.active) {
+    return null;
+  }
+
+  let instruction = "";
+  if (guidance.selectedMode === "wrap_up") {
+    instruction =
+      "Execution policy for this task: keep scope minimal, avoid starting new refactors, finish the current slice cleanly, and include clear handoff notes for deferred work.";
+  } else if (guidance.selectedMode === "full_depth") {
+    instruction =
+      "Execution policy for this task: proceed with full implementation depth, include robust validation and tests, and do not shrink scope only because a deadline is near.";
+  } else {
+    instruction =
+      "Execution policy for this task: follow the provided context to balance scope and depth, stay focused on the requested outcome, and avoid unnecessary expansion.";
+  }
+
+  const context: string[] = [];
+
+  if (typeof guidance.remainingMinutes === "number") {
+    context.push(
+      `About ${guidance.remainingMinutes} minutes remain before the attention deadline.`,
+    );
+  }
+
+  if (guidance.reason) {
+    context.push(`Reason: ${guidance.reason}`);
+  }
+
+  if (guidance.hints && guidance.hints.length > 0) {
+    context.push(`Hints: ${guidance.hints.join("; ")}`);
+  }
+
+  return [instruction, ...context].join(" ");
+}
+
 function withActorContext(client: HeadsDownClient, commandName: string): HeadsDownClient {
   const actorContext: ActorContext = {
     source: "claude-code",
@@ -130,6 +178,11 @@ function formatSummary(contract: Contract | null, availability: ScheduleResoluti
     parts.push(
       `active availability window: ${availability.activeWindow.label} (${availability.activeWindow.mode})`,
     );
+  }
+
+  const wrapUpInstruction = buildWrapUpInstruction(availability.wrapUpGuidance);
+  if (wrapUpInstruction) {
+    parts.push(`wrap-up instruction: ${wrapUpInstruction}`);
   }
 
   if (availability.nextWindow) {
