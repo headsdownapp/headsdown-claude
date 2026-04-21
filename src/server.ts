@@ -151,6 +151,11 @@ export function createServer(): Server {
               type: "string",
               description: "Reference to the task source: ticket number, PR URL, or description.",
             },
+            delivery_mode: {
+              type: "string",
+              enum: ["auto", "wrap_up", "full_depth"],
+              description: "Optional task delivery mode override for Wrap-Up guidance.",
+            },
           },
           required: ["description"],
         },
@@ -402,6 +407,7 @@ async function handlePropose(args: Record<string, unknown>) {
       typeof args.estimated_minutes === "number" ? args.estimated_minutes : undefined,
     scopeSummary: typeof args.scope_summary === "string" ? args.scope_summary : undefined,
     sourceRef: typeof args.source_ref === "string" ? args.source_ref : undefined,
+    deliveryMode: parseDeliveryMode(args.delivery_mode),
   };
 
   const actorClient = withActorContext(client, "headsdown_propose");
@@ -452,6 +458,7 @@ async function handlePropose(args: Record<string, unknown>) {
         guidance,
         proposalId: verdict.proposalId,
         evaluatedAt: verdict.evaluatedAt,
+        wrapUpGuidance: verdict.wrapUpGuidance,
       },
       null,
       2,
@@ -617,62 +624,70 @@ async function handleGrants(args: Record<string, unknown>) {
   const actorClient = withActorContext(client, "headsdown_grants");
   const action = typeof args.action === "string" ? args.action : "list_active";
 
-  if (action === "list_active") {
-    const grants = await actorClient.listActiveDelegationGrants();
-    return textResult(JSON.stringify({ grants }, null, 2));
-  }
-
-  if (action === "list") {
-    const filter = buildDelegationGrantFilterInput(args);
-    const hasFilter = Object.values(filter).some((value) => value !== undefined);
-    const grants = await actorClient.listDelegationGrants(hasFilter ? filter : undefined);
-    return textResult(JSON.stringify({ grants }, null, 2));
-  }
-
-  if (action === "create") {
-    if (typeof args.scope !== "string") {
-      return errorResult("The 'scope' parameter is required for action='create'.");
+  try {
+    if (action === "list_active") {
+      const grants = await actorClient.listActiveDelegationGrants();
+      return textResult(JSON.stringify({ grants }, null, 2));
     }
 
-    if (!Array.isArray(args.permissions) || args.permissions.length === 0) {
-      return errorResult("The 'permissions' parameter is required for action='create'.");
+    if (action === "list") {
+      const filter = buildDelegationGrantFilterInput(args);
+      const hasFilter = Object.values(filter).some((value) => value !== undefined);
+      const grants = await actorClient.listDelegationGrants(hasFilter ? filter : undefined);
+      return textResult(JSON.stringify({ grants }, null, 2));
     }
 
-    const input: DelegationGrantInput = {
-      scope: args.scope as DelegationGrantScope,
-      sessionId: typeof args.session_id === "string" ? args.session_id : undefined,
-      workspaceRef: typeof args.workspace_ref === "string" ? args.workspace_ref : undefined,
-      agentId: typeof args.agent_id === "string" ? args.agent_id : undefined,
-      permissions: args.permissions as DelegationGrantPermission[],
-      durationMinutes:
-        typeof args.duration_minutes === "number" ? args.duration_minutes : undefined,
-      expiresAt: typeof args.expires_at === "string" ? args.expires_at : undefined,
-      source: typeof args.source === "string" ? args.source : "claude-code",
-    };
+    if (action === "create") {
+      if (typeof args.scope !== "string") {
+        return errorResult("The 'scope' parameter is required for action='create'.");
+      }
 
-    const grant = await actorClient.createDelegationGrant(input);
-    return textResult(JSON.stringify({ grant }, null, 2));
-  }
+      if (!Array.isArray(args.permissions) || args.permissions.length === 0) {
+        return errorResult("The 'permissions' parameter is required for action='create'.");
+      }
 
-  if (action === "revoke") {
-    if (typeof args.id !== "string" || !args.id.trim()) {
-      return errorResult("The 'id' parameter is required for action='revoke'.");
+      const input: DelegationGrantInput = {
+        scope: args.scope as DelegationGrantScope,
+        sessionId: typeof args.session_id === "string" ? args.session_id : undefined,
+        workspaceRef: typeof args.workspace_ref === "string" ? args.workspace_ref : undefined,
+        agentId: typeof args.agent_id === "string" ? args.agent_id : undefined,
+        permissions: args.permissions as DelegationGrantPermission[],
+        durationMinutes:
+          typeof args.duration_minutes === "number" ? args.duration_minutes : undefined,
+        expiresAt: typeof args.expires_at === "string" ? args.expires_at : undefined,
+        source: typeof args.source === "string" ? args.source : "claude-code",
+      };
+
+      const grant = await actorClient.createDelegationGrant(input);
+      return textResult(JSON.stringify({ grant }, null, 2));
     }
 
-    const grant = await actorClient.revokeDelegationGrant(args.id);
-    return textResult(JSON.stringify({ grant }, null, 2));
-  }
+    if (action === "revoke") {
+      if (typeof args.id !== "string" || !args.id.trim()) {
+        return errorResult("The 'id' parameter is required for action='revoke'.");
+      }
 
-  if (action === "revoke_many") {
-    const filter = buildDelegationGrantFilterInput(args);
-    const hasFilter = Object.values(filter).some((value) => value !== undefined);
-    const result = await actorClient.revokeDelegationGrants(hasFilter ? filter : undefined);
-    return textResult(JSON.stringify({ result }, null, 2));
-  }
+      const grant = await actorClient.revokeDelegationGrant(args.id);
+      return textResult(JSON.stringify({ grant }, null, 2));
+    }
 
-  return errorResult(
-    "Invalid action. Must be one of: list_active, list, create, revoke, revoke_many.",
-  );
+    if (action === "revoke_many") {
+      const filter = buildDelegationGrantFilterInput(args);
+      const hasFilter = Object.values(filter).some((value) => value !== undefined);
+      const result = await actorClient.revokeDelegationGrants(hasFilter ? filter : undefined);
+      return textResult(JSON.stringify({ result }, null, 2));
+    }
+
+    return errorResult(
+      "Invalid action. Must be one of: list_active, list, create, revoke, revoke_many.",
+    );
+  } catch (error) {
+    const grantMessage = formatGrantCapabilityError(error);
+    if (grantMessage) {
+      return errorResult(grantMessage);
+    }
+    return handleError(error);
+  }
 }
 
 async function handleOverride(args: Record<string, unknown>) {
@@ -743,6 +758,34 @@ function withActorContext(client: HeadsDownClient, toolName: string): HeadsDownC
   }
 
   return client.withActor(actorContext);
+}
+
+function parseDeliveryMode(value: unknown): ProposalInput["deliveryMode"] {
+  if (value === "auto" || value === "wrap_up" || value === "full_depth") {
+    return value;
+  }
+
+  return undefined;
+}
+
+function isSessionTokenOnlyGrantError(message: string): boolean {
+  return (
+    message.includes("session-token auth path") ||
+    message.includes("session-token auth") ||
+    message.includes("Delegation grants require session-token auth")
+  );
+}
+
+function formatGrantCapabilityError(error: unknown): string | null {
+  if (error instanceof AuthError && isSessionTokenOnlyGrantError(error.message)) {
+    return "Delegation grant management requires a session-token auth path and is unavailable for API-key clients.";
+  }
+
+  if (error instanceof ApiError && isSessionTokenOnlyGrantError(error.message)) {
+    return "Delegation grant management requires a session-token auth path and is unavailable for API-key clients.";
+  }
+
+  return null;
 }
 
 function buildDelegationGrantFilterInput(
@@ -930,6 +973,17 @@ function formatAvailabilitySummary(
     );
   }
 
+  if (availability.wrapUpGuidance?.active) {
+    const remaining = availability.wrapUpGuidance.remainingMinutes;
+    const mode = availability.wrapUpGuidance.selectedMode;
+    const reason = availability.wrapUpGuidance.reason;
+    const timing = typeof remaining === "number" ? `${remaining} minutes remaining` : "active";
+    parts.push(`Wrap-Up guidance: ${timing} (${mode})`);
+    if (reason) {
+      parts.push(`Wrap-Up reason: ${reason}`);
+    }
+  }
+
   if (availability.nextWindow) {
     parts.push(
       `Next availability window: ${availability.nextWindow.label} (${availability.nextWindow.mode})`,
@@ -953,6 +1007,12 @@ function errorResult(text: string) {
 
 function handleError(error: unknown) {
   if (error instanceof AuthError) {
+    if (isSessionTokenOnlyGrantError(error.message)) {
+      return errorResult(
+        "Delegation grant management requires a session-token auth path and is unavailable for API-key clients.",
+      );
+    }
+
     return errorResult(
       `Authentication error: ${error.message}\n\nRun the headsdown_auth tool to re-authenticate.`,
     );
