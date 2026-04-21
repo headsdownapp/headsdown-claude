@@ -1,6 +1,6 @@
 {
   "name": "headsdown-claude",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "HeadsDown availability extension for Claude Code. Gives Claude awareness of your focus mode, schedule, and availability before starting tasks.",
   "type": "module",
   "bin": {
