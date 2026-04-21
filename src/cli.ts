@@ -6,8 +6,9 @@
  * hooks and commands run as shell scripts and can't call MCP tools directly.
  */
 
+import * as HeadsDownSDK from "@headsdown/sdk";
 import { HeadsDownClient, ConfigStore, ProposalStateStore, AuthError } from "@headsdown/sdk";
-import type { ActorContext, Contract, ScheduleResolution } from "@headsdown/sdk";
+import type { ActorContext, Contract, ScheduleResolution, Verdict } from "@headsdown/sdk";
 
 const command = process.argv[2];
 
@@ -40,7 +41,10 @@ async function status() {
         contract,
         availability,
         summary: formatSummary(contract, availability),
-        wrapUpInstruction: buildWrapUpInstruction(availability.wrapUpGuidance),
+        wrapUpInstruction: resolveExecutionInstruction({
+          contract,
+          schedule: availability,
+        }),
       },
       null,
       2,
@@ -89,18 +93,27 @@ async function digestCount() {
   console.log(String(summaries.length));
 }
 
-function buildWrapUpInstruction(
-  guidance:
-    | {
-        active?: boolean;
-        selectedMode?: "auto" | "wrap_up" | "full_depth";
-        remainingMinutes?: number | null;
-        reason?: string;
-        hints?: string[];
-      }
-    | null
-    | undefined,
-): string | null {
+function resolveExecutionInstruction(input: {
+  contract?: Contract | null;
+  schedule?: ScheduleResolution | null;
+  verdict?: Pick<Verdict, "decision" | "reason" | "wrapUpGuidance"> | null;
+}): string | null {
+  const describeExecutionDirective = (
+    HeadsDownSDK as unknown as {
+      describeExecutionDirective?: (value: {
+        contract?: Contract | null;
+        schedule?: ScheduleResolution | null;
+        verdict?: Pick<Verdict, "decision" | "reason" | "wrapUpGuidance"> | null;
+      }) => { primaryDirective?: string };
+    }
+  ).describeExecutionDirective;
+
+  if (typeof describeExecutionDirective === "function") {
+    const directive = describeExecutionDirective(input);
+    return directive.primaryDirective ?? null;
+  }
+
+  const guidance = input.verdict?.wrapUpGuidance ?? input.schedule?.wrapUpGuidance;
   if (!guidance || !guidance.active) {
     return null;
   }
@@ -180,7 +193,10 @@ function formatSummary(contract: Contract | null, availability: ScheduleResoluti
     );
   }
 
-  const wrapUpInstruction = buildWrapUpInstruction(availability.wrapUpGuidance);
+  const wrapUpInstruction = resolveExecutionInstruction({
+    contract,
+    schedule: availability,
+  });
   if (wrapUpInstruction) {
     parts.push(`wrap-up instruction: ${wrapUpInstruction}`);
   }
