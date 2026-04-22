@@ -1,6 +1,6 @@
 {
   "name": "headsdown",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Availability awareness for Claude Code. Checks your focus mode, schedule, and availability before starting tasks. Submits task proposals for verdict (approved/deferred) to respect your focus time.",
   "author": {
     "name": "HeadsDown",
