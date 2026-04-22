@@ -73,6 +73,10 @@ When you submit a proposal:
   - Suggest postponing to a better time
   - Or offer to scope the task down to something smaller
 
+### Full-Depth Override
+
+If the user explicitly asks to go deep on a task — "do the full implementation," "don't skip tests," "I have time for this" — pass `delivery_mode: full_depth` in the proposal. This signals to HeadsDown that the user wants complete execution even if wrap-up guidance is active. Use `delivery_mode: wrap_up` to explicitly request minimal-scope execution. Omit `delivery_mode` (or use `auto`) to let HeadsDown decide based on the current availability context.
+
 ## Commit Strategy
 
 Adapt your commit frequency to the current execution policy:

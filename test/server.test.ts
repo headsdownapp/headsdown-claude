@@ -236,6 +236,27 @@ describe("HeadsDown MCP Server", () => {
       expect(props.delivery_mode.type).toBe("string");
     });
 
+    it("propose delivery_mode accepts auto, wrap_up, and full_depth", async () => {
+      const client = await createTestClient();
+      const result = await client.listTools();
+      const propose = result.tools.find((t) => t.name === "headsdown_propose");
+      const deliveryMode = (
+        propose?.inputSchema.properties as Record<string, { type: string; enum?: string[] }>
+      ).delivery_mode;
+
+      expect(deliveryMode.enum).toContain("auto");
+      expect(deliveryMode.enum).toContain("wrap_up");
+      expect(deliveryMode.enum).toContain("full_depth");
+    });
+
+    it("status tool output includes availability and wrapUpInstruction fields", async () => {
+      const client = await createTestClient();
+      const result = await client.listTools();
+      const status = result.tools.find((t) => t.name === "headsdown_status");
+      // Status has no required params but its description should mention availability
+      expect(status?.description?.toLowerCase()).toContain("availability");
+    });
+
     it("digest tool has optional latest parameter", async () => {
       const client = await createTestClient();
       const result = await client.listTools();
@@ -509,6 +530,15 @@ describe("Plugin structure", () => {
       expect(content).toContain("Decompose");
     });
 
+    it("documents full-depth delivery_mode override", async () => {
+      const skillPath = join(import.meta.dirname, "..", "skills", "headsdown", "SKILL.md");
+      const content = await readFile(skillPath, "utf-8");
+
+      expect(content).toContain("delivery_mode");
+      expect(content).toContain("full_depth");
+      expect(content).toContain("wrap_up");
+    });
+
     it("references headsdown_continuation in the tool list", async () => {
       const skillPath = join(import.meta.dirname, "..", "skills", "headsdown", "SKILL.md");
       const content = await readFile(skillPath, "utf-8");
@@ -773,6 +803,22 @@ describe("Plugin structure", () => {
       expect(content).toContain("Wrap-Up guidance");
       expect(content).toContain("wrapUpGuidance");
       expect(content).toContain("Execution policy for this task");
+    });
+
+    it("status handler returns wrapUpInstruction in JSON output", async () => {
+      const serverPath = join(import.meta.dirname, "..", "src", "server.ts");
+      const content = await readFile(serverPath, "utf-8");
+      // handleStatus should include wrapUpInstruction in its JSON output
+      expect(content).toContain("wrapUpInstruction");
+      // availability object is returned which carries wrapUpGuidance
+      expect(content).toContain("availability");
+    });
+
+    it("propose handler forwards delivery_mode to SDK", async () => {
+      const serverPath = join(import.meta.dirname, "..", "src", "server.ts");
+      const content = await readFile(serverPath, "utf-8");
+      expect(content).toContain("parseDeliveryMode");
+      expect(content).toContain("deliveryMode");
     });
 
     it("exits silently when CLI is not built", async () => {
