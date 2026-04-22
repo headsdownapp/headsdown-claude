@@ -9,16 +9,41 @@ This skill connects you to [HeadsDown](https://headsdown.app) so you're aware of
 
 ## MCP Tools Available
 
-This plugin provides eight MCP tools. Use them via normal tool calls:
+This plugin provides nine MCP tools. Use them via normal tool calls:
 
-- **headsdown_status**: Check current availability (mode, availability state, time remaining)
+- **headsdown_status**: Check current availability (mode, execution directive, time remaining)
 - **headsdown_propose**: Submit a task proposal for verdict (approved/deferred)
+- **headsdown_interrupt**: Check whether it's appropriate to interrupt the user mid-task
 - **headsdown_digest**: View notifications and messages that arrived during focus time
 - **headsdown_grants**: List/create/revoke delegation grants for actor-scoped permissions
 - **headsdown_override**: Get/set/clear temporary availability overrides
 - **headsdown_report**: Report task outcome for calibration (completed/failed/etc.)
 - **headsdown_continuation**: Save/load structured continuation artifacts for resumable work sessions
 - **headsdown_auth**: Authenticate with HeadsDown via Device Flow
+
+## Two-Axis Availability Model
+
+`headsdown_status` returns two independent signals. Read both before starting work.
+
+**Axis 1 — Availability mode** (`mode` field, user-set):
+- `online` / `busy` / `limited` / `offline`
+- What the user explicitly chose. Stable until they change it.
+
+**Axis 2 — Execution directive** (`executionDirective` field, schedule-derived):
+- `proceed`: No time pressure. Work at full depth.
+- `proceed_with_caution`: Window ending soon or transitioning. Scope conservatively.
+- `defer`: Outside available hours or in a blocked window. Defer non-trivial work.
+- Derived from schedule, wrap-up guidance, and remaining window time.
+
+These axes are **independent**. A user can be `online` (Axis 1) with a `proceed_with_caution` directive (Axis 2) if their window is ending. Or `busy` (Axis 1) with `proceed` (Axis 2) if they're in focus mode but there's no time pressure.
+
+The `executionDirective` also includes `hardLimits` — machine-readable constraints:
+- `avoidNewRefactors`: don't start new refactors mid-session
+- `requireHandoffIfIncomplete`: must write handoff notes before stopping
+- `requireConfirmationBeforeLargeChanges`: ask before touching many files
+- `maxScope`: "minimal" | "normal" | "full_depth"
+
+Respect `hardLimits` as firm constraints, not suggestions.
 
 ## When to Check
 
@@ -92,6 +117,22 @@ If you realize mid-task that you will touch significantly more files or modules 
 
 Watch for signals that scope has grown: you're editing files in a third module, you've discovered a dependency that requires changes in multiple layers, or the PostToolUse context message notes that your file count has exceeded the estimate. When you see these, pause and re-propose before continuing.
 
+## Interrupt Evaluation
+
+Before asking the user a **non-critical** clarifying question mid-task, call `headsdown_interrupt`.
+
+- If `allowed: true`: Proceed with the question.
+- If `allowed: false` and `autoResponse` is set: Use the `autoResponse` text as your reply instead of asking. Do not surface the question.
+- If `allowed: false` and `autoResponse` is null: Continue without asking. Make a reasonable assumption and note it in your handoff.
+
+Use the `handle` parameter to describe the interrupt type:
+- `"clarifying_question"` — you need more information
+- `"scope_change"` — the task is larger than expected
+- `"error"` — you hit a blocking error
+- `"status_update"` — you want to share progress
+
+**Skip `headsdown_interrupt`** for critical blockers (security risks, destructive irreversible actions, ambiguous destructive intent). Those always require user input.
+
 ## Digest: What You Missed
 
 The digest collects notifications and messages that arrived while the user was in focus mode. Use `headsdown_digest` to review them.
@@ -121,7 +162,7 @@ After completing a task that was approved via `headsdown_propose`, call `headsdo
 
 Report outcomes: `completed`, `failed`, `partially_completed`, `cancelled`, or `timed_out`. Include `error_category` for failures and `tests_passed` when relevant.
 
-**Proactive session-end reporting:** If a session is ending — the user says they're done, you've finished the work, or you're in a wrap-up wind-down — and there is an approved proposal that hasn't been reported yet, call `headsdown_report` before finishing. Don't wait to be asked.
+**Proactive session-end reporting:** A Stop hook auto-reports `completed` or `partially_completed` (based on whether a continuation artifact exists) when the session ends. You still need to call `headsdown_report` manually for `failed`, `cancelled`, or `timed_out` outcomes — the Stop hook only handles the normal-exit cases. If a session is ending due to an error or cancellation, call `headsdown_report` before finishing.
 
 ## Wrap-Up Handoff Notes
 

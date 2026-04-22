@@ -12,7 +12,13 @@ import { homedir } from "node:os";
 import { mkdirSync } from "node:fs";
 import * as HeadsDownSDK from "@headsdown/sdk";
 import { HeadsDownClient, ConfigStore, ProposalStateStore, AuthError } from "@headsdown/sdk";
-import type { ActorContext, Contract, ScheduleResolution, Verdict } from "@headsdown/sdk";
+import type {
+  ActorContext,
+  Contract,
+  OutcomeInput,
+  ScheduleResolution,
+  Verdict,
+} from "@headsdown/sdk";
 
 const command = process.argv[2];
 
@@ -32,6 +38,8 @@ async function main() {
       return await nextWindow();
     case "continuation":
       return await continuation();
+    case "report":
+      return await report();
     default:
       process.exit(1);
   }
@@ -308,6 +316,37 @@ function formatSummary(contract: Contract | null, availability: ScheduleResoluti
   }
 
   return parts.join(", ");
+}
+
+/**
+ * Auto-report task outcome at session end.
+ * Reads the latest approved proposal from ProposalStateStore and calls reportOutcome.
+ * Outcome: partially_completed if a continuation artifact exists, completed otherwise.
+ * Exits silently on any error — must never disrupt session end.
+ */
+async function report() {
+  const store = new ProposalStateStore();
+  const proposal = await store.getLatestApproved();
+  if (!proposal) {
+    process.exit(0);
+  }
+
+  let outcome: OutcomeInput["outcome"] = "completed";
+  try {
+    await access(CONTINUATION_PATH);
+    outcome = "partially_completed";
+  } catch {
+    // No continuation file — task completed normally
+  }
+
+  try {
+    const client = await HeadsDownClient.fromCredentials();
+    const actorClient = withActorContext(client, "cli-report");
+    const input: OutcomeInput = { proposalId: proposal.id, outcome };
+    await actorClient.reportOutcome(input);
+  } catch {
+    // Don't disrupt session end for any reason
+  }
 }
 
 main().catch((error) => {

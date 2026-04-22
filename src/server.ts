@@ -25,6 +25,8 @@ import type {
   DelegationGrantScope,
   DeviceAuthorization,
   DigestSummary,
+  ExecutionDirective,
+  InterruptResult,
   ProposalInput,
   ScheduleResolution,
   Verdict,
@@ -375,6 +377,26 @@ export function createServer(): Server {
           required: ["action"],
         },
       },
+      {
+        name: "headsdown_interrupt",
+        description:
+          "HeadsDown: Check whether it is appropriate to interrupt the user with a question " +
+          "or notification. Call this before asking a non-critical clarifying question mid-task. " +
+          "If allowed is false, use the autoResponse text instead of interrupting. " +
+          "Returns { allowed, reason, autoResponse, guidance }.",
+        inputSchema: {
+          type: "object" as const,
+          properties: {
+            handle: {
+              type: "string",
+              description:
+                "Type of interrupt: 'clarifying_question', 'scope_change', 'error', " +
+                "'status_update'. Defaults to 'claude-code' if omitted.",
+            },
+          },
+          required: [],
+        },
+      },
     ],
   }));
 
@@ -404,6 +426,8 @@ export function createServer(): Server {
           return await handleOverride((args ?? {}) as Record<string, unknown>);
         case "headsdown_continuation":
           return await handleContinuation((args ?? {}) as Record<string, unknown>);
+        case "headsdown_interrupt":
+          return await handleInterrupt((args ?? {}) as Record<string, unknown>);
         default:
           return errorResult(`Unknown tool: ${name}`);
       }
@@ -427,15 +451,27 @@ async function handleStatus() {
 
   const actorClient = withActorContext(client, "headsdown_status");
   const { contract, schedule: availability } = await actorClient.getAvailability();
-  const wrapUpInstruction = resolveExecutionInstruction({
-    contract,
-    schedule: availability,
-  });
+  const directive = resolveExecutionDirective({ contract, schedule: availability });
+  const wrapUpInstruction =
+    directive?.primaryDirective ??
+    resolveExecutionInstruction({ contract, schedule: availability });
 
   return textResult(
     JSON.stringify(
       {
         authenticated: true,
+        // Axis 1: availability mode (user-set)
+        mode: contract?.mode ?? null,
+        // Axis 2: execution directive (schedule-derived)
+        executionDirective: directive
+          ? {
+              code: directive.directiveCode,
+              primary: directive.primaryDirective,
+              summary: directive.summary,
+              hardLimits: directive.hardLimits,
+            }
+          : null,
+        // Full objects for callers that need them
         contract,
         availability,
         summary: formatAvailabilitySummary(contract, availability),
@@ -848,23 +884,26 @@ function parseDeliveryMode(value: unknown): ProposalInput["deliveryMode"] {
   return undefined;
 }
 
+function resolveExecutionDirective(input: {
+  contract?: Contract | null;
+  schedule?: ScheduleResolution | null;
+  verdict?: Pick<Verdict, "decision" | "reason" | "wrapUpGuidance"> | null;
+}): ExecutionDirective | null {
+  const fn = (
+    HeadsDownSDK as unknown as {
+      describeExecutionDirective?: (value: typeof input) => ExecutionDirective;
+    }
+  ).describeExecutionDirective;
+  return typeof fn === "function" ? fn(input) : null;
+}
+
 function resolveExecutionInstruction(input: {
   contract?: Contract | null;
   schedule?: ScheduleResolution | null;
   verdict?: Pick<Verdict, "decision" | "reason" | "wrapUpGuidance"> | null;
 }): string | null {
-  const describeExecutionDirective = (
-    HeadsDownSDK as unknown as {
-      describeExecutionDirective?: (value: {
-        contract?: Contract | null;
-        schedule?: ScheduleResolution | null;
-        verdict?: Pick<Verdict, "decision" | "reason" | "wrapUpGuidance"> | null;
-      }) => { primaryDirective?: string };
-    }
-  ).describeExecutionDirective;
-
-  if (typeof describeExecutionDirective === "function") {
-    const directive = describeExecutionDirective(input);
+  const directive = resolveExecutionDirective(input);
+  if (directive) {
     return directive.primaryDirective ?? null;
   }
 
@@ -952,6 +991,40 @@ async function handleContinuation(args: Record<string, unknown>) {
   }
 
   return errorResult("The 'action' parameter must be 'save' or 'load'.");
+}
+
+async function handleInterrupt(args: Record<string, unknown>) {
+  const client = await getClient();
+  if (!client) {
+    return errorResult(
+      "Not authenticated with HeadsDown. Run the headsdown_auth tool to connect your account.",
+    );
+  }
+
+  const handle =
+    typeof args.handle === "string" && args.handle.trim() ? args.handle.trim() : "claude-code";
+
+  const actorClient = withActorContext(client, "headsdown_interrupt");
+  const result: InterruptResult = await actorClient.evaluateInterrupt(handle);
+
+  const guidance = result.allowed
+    ? "You may proceed with the interrupt."
+    : result.autoResponse
+      ? `Do not interrupt. Respond with: "${result.autoResponse}"`
+      : "Do not interrupt. Continue working without asking.";
+
+  return textResult(
+    JSON.stringify(
+      {
+        allowed: result.allowed,
+        reason: result.reason,
+        autoResponse: result.autoResponse,
+        guidance,
+      },
+      null,
+      2,
+    ),
+  );
 }
 
 function formatGrantCapabilityError(error: unknown): string | null {
@@ -1116,10 +1189,11 @@ function formatAvailabilitySummary(
 ): string {
   const parts: string[] = [];
 
+  // Axis 1: availability mode (user-set)
   if (!contract) {
-    parts.push("No active availability contract. The user has not set their status.");
+    parts.push("Axis 1 — Availability mode: not set (no active contract).");
   } else {
-    parts.push(`Mode: ${contract.mode}`);
+    parts.push(`Axis 1 — Availability mode (user-set): ${contract.mode}`);
 
     if (contract.statusText) {
       const emoji = contract.statusEmoji ? `${contract.statusEmoji} ` : "";
@@ -1139,6 +1213,18 @@ function formatAvailabilitySummary(
     if (contract.autoRespond) parts.push("Auto-respond is enabled");
   }
 
+  // Axis 2: execution directive (schedule-derived, independent of mode)
+  const directive = resolveExecutionDirective({ contract, schedule: availability });
+  if (directive) {
+    parts.push(`Axis 2 — Execution directive (schedule-derived): ${directive.directiveCode}`);
+    parts.push(`Execution directive summary: ${directive.summary}`);
+    if (directive.hardLimits.avoidNewRefactors) parts.push("Hard limit: avoid new refactors");
+    if (directive.hardLimits.requireHandoffIfIncomplete)
+      parts.push("Hard limit: require handoff notes if incomplete");
+    if (directive.hardLimits.requireConfirmationBeforeLargeChanges)
+      parts.push("Hard limit: confirm before large changes");
+  }
+
   if (availability.inReachableHours) {
     parts.push("Currently in available hours.");
   } else {
@@ -1153,20 +1239,11 @@ function formatAvailabilitySummary(
 
   if (availability.wrapUpGuidance?.active) {
     const remaining = availability.wrapUpGuidance.remainingMinutes;
-    const mode = availability.wrapUpGuidance.selectedMode;
     const reason = availability.wrapUpGuidance.reason;
     const timing = typeof remaining === "number" ? `${remaining} minutes remaining` : "active";
-    parts.push(`Wrap-Up guidance: ${timing} (${mode})`);
+    parts.push(`Wrap-Up guidance: ${timing}`);
     if (reason) {
       parts.push(`Wrap-Up reason: ${reason}`);
-    }
-
-    const instruction = resolveExecutionInstruction({
-      contract,
-      schedule: availability,
-    });
-    if (instruction) {
-      parts.push(`Wrap-Up instruction: ${instruction}`);
     }
   }
 

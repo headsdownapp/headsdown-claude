@@ -40,7 +40,7 @@ async function createTestClient() {
 
 describe("HeadsDown MCP Server", () => {
   describe("listTools", () => {
-    it("exposes eight tools", async () => {
+    it("exposes ten tools", async () => {
       const client = await createTestClient();
       const result = await client.listTools();
 
@@ -50,6 +50,7 @@ describe("HeadsDown MCP Server", () => {
         "headsdown_continuation",
         "headsdown_digest",
         "headsdown_grants",
+        "headsdown_interrupt",
         "headsdown_override",
         "headsdown_propose",
         "headsdown_report",
@@ -305,6 +306,16 @@ describe("HeadsDown MCP Server", () => {
       expect(Object.keys(auth?.inputSchema.properties as object)).toEqual([]);
     });
 
+    it("interrupt tool has optional handle parameter", async () => {
+      const client = await createTestClient();
+      const result = await client.listTools();
+      const interrupt = result.tools.find((t) => t.name === "headsdown_interrupt");
+
+      expect(interrupt?.inputSchema.required).toEqual([]);
+      const props = interrupt?.inputSchema.properties as Record<string, { type: string }>;
+      expect(props.handle.type).toBe("string");
+    });
+
     it("continuation tool requires action parameter", async () => {
       const client = await createTestClient();
       const result = await client.listTools();
@@ -315,6 +326,29 @@ describe("HeadsDown MCP Server", () => {
       expect(props.action.type).toBe("string");
       expect(props.branch.type).toBe("string");
       expect(props.resume_instruction.type).toBe("string");
+    });
+  });
+
+  describe("headsdown_interrupt", () => {
+    it("returns auth error when not authenticated", async () => {
+      const client = await createTestClient();
+      const result = await client.callTool({ name: "headsdown_interrupt", arguments: {} });
+
+      const text = (result.content as Array<{ type: string; text: string }>)[0].text;
+      expect(text).toContain("Not authenticated");
+      expect(result.isError).toBe(true);
+    });
+
+    it("returns auth error with optional handle parameter", async () => {
+      const client = await createTestClient();
+      const result = await client.callTool({
+        name: "headsdown_interrupt",
+        arguments: { handle: "clarifying_question" },
+      });
+
+      const text = (result.content as Array<{ type: string; text: string }>)[0].text;
+      expect(text).toContain("Not authenticated");
+      expect(result.isError).toBe(true);
     });
   });
 
@@ -539,6 +573,50 @@ describe("Plugin structure", () => {
       expect(content).toContain("wrap_up");
     });
 
+    it("documents the two-axis availability model", async () => {
+      const skillPath = join(import.meta.dirname, "..", "skills", "headsdown", "SKILL.md");
+      const content = await readFile(skillPath, "utf-8");
+
+      expect(content).toContain("Two-Axis");
+      expect(content).toContain("Axis 1");
+      expect(content).toContain("Axis 2");
+      expect(content).toContain("executionDirective");
+    });
+
+    it("documents execution directive codes", async () => {
+      const skillPath = join(import.meta.dirname, "..", "skills", "headsdown", "SKILL.md");
+      const content = await readFile(skillPath, "utf-8");
+
+      expect(content).toContain("proceed_with_caution");
+      expect(content).toContain("proceed");
+      expect(content).toContain("defer");
+    });
+
+    it("documents hard limits from execution directive", async () => {
+      const skillPath = join(import.meta.dirname, "..", "skills", "headsdown", "SKILL.md");
+      const content = await readFile(skillPath, "utf-8");
+
+      expect(content).toContain("hardLimits");
+      expect(content).toContain("avoidNewRefactors");
+    });
+
+    it("documents interrupt evaluation guidance", async () => {
+      const skillPath = join(import.meta.dirname, "..", "skills", "headsdown", "SKILL.md");
+      const content = await readFile(skillPath, "utf-8");
+
+      expect(content).toContain("headsdown_interrupt");
+      expect(content).toContain("autoResponse");
+      expect(content).toContain("allowed");
+    });
+
+    it("documents Stop hook auto-reporting behavior", async () => {
+      const skillPath = join(import.meta.dirname, "..", "skills", "headsdown", "SKILL.md");
+      const content = await readFile(skillPath, "utf-8");
+
+      expect(content).toContain("Stop hook");
+      expect(content).toContain("partially_completed");
+    });
+
     it("references headsdown_continuation in the tool list", async () => {
       const skillPath = join(import.meta.dirname, "..", "skills", "headsdown", "SKILL.md");
       const content = await readFile(skillPath, "utf-8");
@@ -642,6 +720,21 @@ describe("Plugin structure", () => {
       expect(preCompact.hooks[0].command).toContain("${CLAUDE_PLUGIN_ROOT}");
       expect(preCompact.hooks[0].timeout).toBeLessThanOrEqual(10);
     });
+
+    it("Stop hook triggers session-end.sh on all matchers", async () => {
+      const hooksPath = join(import.meta.dirname, "..", "hooks", "hooks.json");
+      const raw = await readFile(hooksPath, "utf-8");
+      const config = JSON.parse(raw);
+
+      expect(config.hooks.Stop).toBeInstanceOf(Array);
+      expect(config.hooks.Stop).toHaveLength(1);
+
+      const stop = config.hooks.Stop[0];
+      expect(stop.matcher).toBe("*");
+      expect(stop.hooks[0].command).toContain("${CLAUDE_PLUGIN_ROOT}");
+      expect(stop.hooks[0].command).toContain("session-end.sh");
+      expect(stop.hooks[0].timeout).toBeLessThanOrEqual(10);
+    });
   });
 
   describe("hooks/session-start.sh", () => {
@@ -722,6 +815,45 @@ describe("Plugin structure", () => {
       expect(content).toContain("headsdown_continuation");
       expect(content).toContain("action");
       expect(content).toContain("load");
+    });
+
+    it("injects both availability mode and execution directive axes", async () => {
+      const scriptPath = join(import.meta.dirname, "..", "hooks", "session-start.sh");
+      const content = await readFile(scriptPath, "utf-8");
+      expect(content).toContain("execution_directive_code");
+      expect(content).toContain("Axis 1");
+      expect(content).toContain("Axis 2");
+    });
+  });
+
+  describe("hooks/session-end.sh", () => {
+    const scriptPath = join(import.meta.dirname, "..", "hooks", "session-end.sh");
+
+    it("exists and is executable", async () => {
+      const { stat } = await import("node:fs/promises");
+      const stats = await stat(scriptPath);
+      expect(stats.mode & 0o100).toBeTruthy();
+    });
+
+    it("uses set -euo pipefail for safety", async () => {
+      const content = await readFile(scriptPath, "utf-8");
+      expect(content).toContain("set -euo pipefail");
+    });
+
+    it("uses CLAUDE_PLUGIN_ROOT for the CLI path", async () => {
+      const content = await readFile(scriptPath, "utf-8");
+      expect(content).toContain("CLAUDE_PLUGIN_ROOT");
+    });
+
+    it("exits cleanly when CLI is not built", async () => {
+      const content = await readFile(scriptPath, "utf-8");
+      expect(content).toContain('if [ ! -f "$CLI" ]');
+      expect(content).toContain("exit 0");
+    });
+
+    it("calls the CLI report command", async () => {
+      const content = await readFile(scriptPath, "utf-8");
+      expect(content).toContain('"$CLI" report');
     });
   });
 
@@ -819,6 +951,15 @@ describe("Plugin structure", () => {
       const content = await readFile(serverPath, "utf-8");
       expect(content).toContain("parseDeliveryMode");
       expect(content).toContain("deliveryMode");
+    });
+
+    it("status handler exposes two-axis model with mode and executionDirective", async () => {
+      const serverPath = join(import.meta.dirname, "..", "src", "server.ts");
+      const content = await readFile(serverPath, "utf-8");
+      expect(content).toContain("executionDirective");
+      expect(content).toContain("Axis 1");
+      expect(content).toContain("Axis 2");
+      expect(content).toContain("hardLimits");
     });
 
     it("exits silently when CLI is not built", async () => {
