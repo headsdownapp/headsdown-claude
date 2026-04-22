@@ -1,0 +1,22 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(chmod +x:*)",
+      "Bash(npm run:*)",
+      "Bash(npm test:*)",
+      "Bash(git -C /Users/justinsmestad/code/headsdown/headsdown-claude log --oneline -10)",
+      "Bash(git -C /Users/justinsmestad/code/headsdown/headsdown-claude log --oneline --all)",
+      "Bash(git checkout:*)",
+      "Bash(git add:*)",
+      "Bash(git commit -m ':*)",
+      "Bash(git push:*)",
+      "Bash(gh pr:*)",
+      "Bash(git -C /Users/justinsmestad/code/headsdown/headsdown-claude checkout main)",
+      "Bash(git pull:*)",
+      "Bash(ls /Users/justinsmestad/code/headsdown/headsdown-claude/hooks/*.json)",
+      "Bash(npx prettier:*)",
+      "Bash(gh issue:*)",
+      "Bash(node:*)"
+    ]
+  }
+}

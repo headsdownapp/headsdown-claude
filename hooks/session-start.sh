@@ -18,23 +18,37 @@ output=$(node "$CLI" status 2>/dev/null) || exit 0
 
 # If we got valid JSON output, format it as a system message for Claude
 if echo "$output" | jq -e . > /dev/null 2>&1; then
+  # Axis 1: availability mode (user-set)
   mode=$(echo "$output" | jq -r '.contract.mode // "unknown"')
   status_text=$(echo "$output" | jq -r '.contract.statusText // empty')
+  # Axis 2: execution directive (schedule-derived)
+  execution_directive_code=$(echo "$output" | jq -r '.executionDirective.code // empty')
+  execution_directive_summary=$(echo "$output" | jq -r '.executionDirective.summary // empty')
+  # Supporting context
   summary=$(echo "$output" | jq -r '.summary // empty')
   wrap_up_instruction=$(echo "$output" | jq -r '.wrapUpInstruction // empty')
-  remaining_minutes=$(echo "$output" | jq -r '.remainingMinutes // empty')
+  remaining_minutes=$(echo "$output" | jq -r '.availability.wrapUpGuidance.remainingMinutes // empty')
   in_reachable_hours=$(echo "$output" | jq -r '.availability.inReachableHours // false')
   active_window_label=$(echo "$output" | jq -r '.availability.activeWindow.label // empty')
 
   # Build context message
   context="[HeadsDown] User availability at session start:"
 
+  # Axis 1
   if [ "$mode" = "null" ] || [ "$mode" = "unknown" ]; then
-    context="$context No active availability contract set."
+    context="$context Axis 1 (availability mode): not set."
   else
-    context="$context Mode: $mode."
+    context="$context Axis 1 (availability mode, user-set): $mode."
     if [ -n "$status_text" ] && [ "$status_text" != "null" ]; then
       context="$context Status: $status_text."
+    fi
+  fi
+
+  # Axis 2
+  if [ -n "$execution_directive_code" ] && [ "$execution_directive_code" != "null" ]; then
+    context="$context Axis 2 (execution directive, schedule-derived): $execution_directive_code."
+    if [ -n "$execution_directive_summary" ] && [ "$execution_directive_summary" != "null" ]; then
+      context="$context $execution_directive_summary"
     fi
   fi
 
@@ -46,10 +60,6 @@ if echo "$output" | jq -e . > /dev/null 2>&1; then
 
   if [ -n "$active_window_label" ] && [ "$active_window_label" != "null" ]; then
     context="$context Active window: $active_window_label."
-  fi
-
-  if [ -n "$summary" ] && [ "$summary" != "null" ]; then
-    context="$context ($summary)"
   fi
 
   if [ -n "$remaining_minutes" ] && [ "$remaining_minutes" != "null" ]; then

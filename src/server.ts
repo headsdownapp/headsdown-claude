@@ -287,16 +287,27 @@ export function createServer(): Server {
       {
         name: "headsdown_digest",
         description:
-          "View the user's HeadsDown digest: aggregated notifications and messages that arrived " +
-          "while they were in focus mode. Returns summaries grouped by source (e.g., Slack " +
-          "messages from a teammate, GitHub PR comments). Call this at the start of a session " +
-          "or when the user asks what they missed. Read-only; does not dismiss or acknowledge entries.",
+          "View or dismiss the user's HeadsDown digest: aggregated notifications and messages " +
+          "that arrived while they were in focus mode. Returns summaries grouped by source " +
+          "(e.g., Slack messages from a teammate, GitHub PR comments). Call at the start of a " +
+          "session or when the user asks what they missed. After presenting entries, offer to " +
+          "dismiss them. Use action 'dismiss' with an id to clear a specific entry.",
         inputSchema: {
           type: "object" as const,
           properties: {
+            action: {
+              type: "string",
+              enum: ["list", "dismiss"],
+              description:
+                "list (default) to view summaries; dismiss to clear a specific entry by id.",
+            },
             latest: {
               type: "number",
-              description: "Limit to N most recent digest summaries. Defaults to 20.",
+              description: "Limit to N most recent digest summaries (for list). Defaults to 20.",
+            },
+            id: {
+              type: "string",
+              description: "Digest summary id to dismiss (required for dismiss action).",
             },
           },
           required: [],
@@ -640,8 +651,19 @@ async function handleDigest(args: Record<string, unknown>) {
     return errorResult("Not authenticated with HeadsDown. Run the headsdown_auth tool first.");
   }
 
-  const latest = typeof args.latest === "number" ? args.latest : 20;
+  const action = typeof args.action === "string" ? args.action : "list";
   const actorClient = withActorContext(client, "headsdown_digest");
+
+  if (action === "dismiss") {
+    const id = typeof args.id === "string" ? args.id.trim() : "";
+    if (!id) {
+      return errorResult("The 'id' parameter is required for action 'dismiss'.");
+    }
+    const dismissed = await actorClient.dismissDigestEntry(id);
+    return textResult(JSON.stringify({ dismissed: true, id: dismissed.id }, null, 2));
+  }
+
+  const latest = typeof args.latest === "number" ? args.latest : 20;
   const summaries = await actorClient.listDigestSummaries({ latest });
 
   if (summaries.length === 0) {

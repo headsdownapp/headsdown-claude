@@ -146,7 +146,7 @@ The digest collects notifications and messages that arrived while the user was i
 - Summarize the digest concisely: "While you were focused, you got 3 Slack messages from Sarah about the API design and 2 GitHub notifications on PR #142."
 - Group by source and actor for readability
 - Don't overwhelm; if there are many entries, highlight the most recent or highest-count summaries
-- This is read-only. You cannot dismiss or acknowledge digest entries.
+- After presenting entries, offer to dismiss them. Call `headsdown_digest` with `action: dismiss` and the entry `id` to clear it.
 
 **Smart triage — prioritize what matters now:**
 
