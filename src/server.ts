@@ -1,4 +1,6 @@
-import { writeFile } from "node:fs/promises";
+import { writeFile, readFile, unlink, mkdir, access } from "node:fs/promises";
+import { join, dirname } from "node:path";
+import { homedir } from "node:os";
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { CallToolRequestSchema, ListToolsRequestSchema } from "@modelcontextprotocol/sdk/types.js";
 import * as HeadsDownSDK from "@headsdown/sdk";
@@ -23,6 +25,8 @@ import type {
   DelegationGrantScope,
   DeviceAuthorization,
   DigestSummary,
+  ExecutionDirective,
+  InterruptResult,
   ProposalInput,
   ScheduleResolution,
   Verdict,
@@ -283,16 +287,27 @@ export function createServer(): Server {
       {
         name: "headsdown_digest",
         description:
-          "View the user's HeadsDown digest: aggregated notifications and messages that arrived " +
-          "while they were in focus mode. Returns summaries grouped by source (e.g., Slack " +
-          "messages from a teammate, GitHub PR comments). Call this at the start of a session " +
-          "or when the user asks what they missed. Read-only; does not dismiss or acknowledge entries.",
+          "View or dismiss the user's HeadsDown digest: aggregated notifications and messages " +
+          "that arrived while they were in focus mode. Returns summaries grouped by source " +
+          "(e.g., Slack messages from a teammate, GitHub PR comments). Call at the start of a " +
+          "session or when the user asks what they missed. After presenting entries, offer to " +
+          "dismiss them. Use action 'dismiss' with an id to clear a specific entry.",
         inputSchema: {
           type: "object" as const,
           properties: {
+            action: {
+              type: "string",
+              enum: ["list", "dismiss"],
+              description:
+                "list (default) to view summaries; dismiss to clear a specific entry by id.",
+            },
             latest: {
               type: "number",
-              description: "Limit to N most recent digest summaries. Defaults to 20.",
+              description: "Limit to N most recent digest summaries (for list). Defaults to 20.",
+            },
+            id: {
+              type: "string",
+              description: "Digest summary id to dismiss (required for dismiss action).",
             },
           },
           required: [],
@@ -325,6 +340,74 @@ export function createServer(): Server {
           required: ["outcome"],
         },
       },
+      {
+        name: "headsdown_continuation",
+        description:
+          "HeadsDown: Save or load a structured continuation artifact for resumable work sessions. " +
+          "When wrapping up a session, call with action 'save' to persist your progress " +
+          "so the next session can resume where you left off. The next SessionStart hook " +
+          "will detect the continuation and inject it into context.",
+        inputSchema: {
+          type: "object" as const,
+          properties: {
+            action: {
+              type: "string",
+              enum: ["save", "load"],
+              description: "Save continuation data or load (and consume) a previous continuation.",
+            },
+            branch: {
+              type: "string",
+              description: "Current git branch name (for save).",
+            },
+            completed_steps: {
+              type: "array",
+              items: { type: "string" },
+              description: "Steps that were completed in this session (for save).",
+            },
+            pending_steps: {
+              type: "array",
+              items: { type: "string" },
+              description: "Steps remaining to be done (for save).",
+            },
+            dirty_files: {
+              type: "array",
+              items: { type: "string" },
+              description: "Files with uncommitted changes (for save).",
+            },
+            open_decisions: {
+              type: "array",
+              items: { type: "string" },
+              description: "Decisions or questions that need the user's input (for save).",
+            },
+            resume_instruction: {
+              type: "string",
+              description:
+                "A concise instruction for the next session on what to do first (for save).",
+            },
+          },
+          required: ["action"],
+        },
+      },
+      {
+        name: "headsdown_interrupt",
+        description:
+          "HeadsDown: Check whether it is appropriate to interrupt the user with a question " +
+          "or notification. Call this before asking a non-critical clarifying question mid-task. " +
+          "If allowed is false, use the autoResponse text instead of interrupting. " +
+          "Returns { allowed, reason, autoResponse, guidance }.",
+        inputSchema: {
+          type: "object" as const,
+          properties: {
+            handle: {
+              type: "string",
+              description:
+                "Type of interrupt: 'clarifying_question', 'scope_change', 'error', " +
+                "'status_update'. Defaults to 'claude-code' if omitted.",
+            },
+          },
+          required: [],
+        },
+      },
     ],
   }));
 
@@ -352,6 +435,10 @@ export function createServer(): Server {
           return await handleGrants((args ?? {}) as Record<string, unknown>);
         case "headsdown_override":
           return await handleOverride((args ?? {}) as Record<string, unknown>);
+        case "headsdown_continuation":
+          return await handleContinuation((args ?? {}) as Record<string, unknown>);
+        case "headsdown_interrupt":
+          return await handleInterrupt((args ?? {}) as Record<string, unknown>);
         default:
           return errorResult(`Unknown tool: ${name}`);
       }
@@ -375,15 +462,27 @@ async function handleStatus() {
 
   const actorClient = withActorContext(client, "headsdown_status");
   const { contract, schedule: availability } = await actorClient.getAvailability();
-  const wrapUpInstruction = resolveExecutionInstruction({
-    contract,
-    schedule: availability,
-  });
+  const directive = resolveExecutionDirective({ contract, schedule: availability });
+  const wrapUpInstruction =
+    directive?.primaryDirective ??
+    resolveExecutionInstruction({ contract, schedule: availability });
 
   return textResult(
     JSON.stringify(
       {
         authenticated: true,
+        // Axis 1: availability mode (user-set)
+        mode: contract?.mode ?? null,
+        // Axis 2: execution directive (schedule-derived)
+        executionDirective: directive
+          ? {
+              code: directive.directiveCode,
+              primary: directive.primaryDirective,
+              summary: directive.summary,
+              hardLimits: directive.hardLimits,
+            }
+          : null,
+        // Full objects for callers that need them
         contract,
         availability,
         summary: formatAvailabilitySummary(contract, availability),
@@ -552,8 +651,19 @@ async function handleDigest(args: Record<string, unknown>) {
     return errorResult("Not authenticated with HeadsDown. Run the headsdown_auth tool first.");
   }
 
-  const latest = typeof args.latest === "number" ? args.latest : 20;
+  const action = typeof args.action === "string" ? args.action : "list";
   const actorClient = withActorContext(client, "headsdown_digest");
+
+  if (action === "dismiss") {
+    const id = typeof args.id === "string" ? args.id.trim() : "";
+    if (!id) {
+      return errorResult("The 'id' parameter is required for action 'dismiss'.");
+    }
+    const dismissed = await actorClient.dismissDigestEntry(id);
+    return textResult(JSON.stringify({ dismissed: true, id: dismissed.id }, null, 2));
+  }
+
+  const latest = typeof args.latest === "number" ? args.latest : 20;
   const summaries = await actorClient.listDigestSummaries({ latest });
 
   if (summaries.length === 0) {
@@ -796,23 +906,26 @@ function parseDeliveryMode(value: unknown): ProposalInput["deliveryMode"] {
   return undefined;
 }
 
+function resolveExecutionDirective(input: {
+  contract?: Contract | null;
+  schedule?: ScheduleResolution | null;
+  verdict?: Pick<Verdict, "decision" | "reason" | "wrapUpGuidance"> | null;
+}): ExecutionDirective | null {
+  const fn = (
+    HeadsDownSDK as unknown as {
+      describeExecutionDirective?: (value: typeof input) => ExecutionDirective;
+    }
+  ).describeExecutionDirective;
+  return typeof fn === "function" ? fn(input) : null;
+}
+
 function resolveExecutionInstruction(input: {
   contract?: Contract | null;
   schedule?: ScheduleResolution | null;
   verdict?: Pick<Verdict, "decision" | "reason" | "wrapUpGuidance"> | null;
 }): string | null {
-  const describeExecutionDirective = (
-    HeadsDownSDK as unknown as {
-      describeExecutionDirective?: (value: {
-        contract?: Contract | null;
-        schedule?: ScheduleResolution | null;
-        verdict?: Pick<Verdict, "decision" | "reason" | "wrapUpGuidance"> | null;
-      }) => { primaryDirective?: string };
-    }
-  ).describeExecutionDirective;
-
-  if (typeof describeExecutionDirective === "function") {
-    const directive = describeExecutionDirective(input);
+  const directive = resolveExecutionDirective(input);
+  if (directive) {
     return directive.primaryDirective ?? null;
   }
 
@@ -857,6 +970,82 @@ function isSessionTokenOnlyGrantError(message: string): boolean {
     message.includes("session-token auth path") ||
     message.includes("session-token auth") ||
     message.includes("Delegation grants require session-token auth")
+  );
+}
+
+const CONTINUATION_PATH = join(homedir(), ".config", "headsdown", "continuation.json");
+
+async function handleContinuation(args: Record<string, unknown>) {
+  const action = typeof args.action === "string" ? args.action : "";
+
+  if (action === "save") {
+    const data = {
+      branch: typeof args.branch === "string" ? args.branch : null,
+      completedSteps: Array.isArray(args.completed_steps) ? args.completed_steps : [],
+      pendingSteps: Array.isArray(args.pending_steps) ? args.pending_steps : [],
+      dirtyFiles: Array.isArray(args.dirty_files) ? args.dirty_files : [],
+      openDecisions: Array.isArray(args.open_decisions) ? args.open_decisions : [],
+      resumeInstruction:
+        typeof args.resume_instruction === "string" ? args.resume_instruction : null,
+      savedAt: new Date().toISOString(),
+    };
+
+    await mkdir(dirname(CONTINUATION_PATH), { recursive: true });
+    await writeFile(CONTINUATION_PATH, JSON.stringify(data, null, 2), { mode: 0o600 });
+
+    return textResult(JSON.stringify({ saved: true, path: CONTINUATION_PATH, data }, null, 2));
+  }
+
+  if (action === "load") {
+    try {
+      await access(CONTINUATION_PATH);
+    } catch {
+      return textResult(
+        JSON.stringify({ found: false, message: "No continuation artifact found." }, null, 2),
+      );
+    }
+
+    const raw = await readFile(CONTINUATION_PATH, "utf-8");
+    const data = JSON.parse(raw);
+    await unlink(CONTINUATION_PATH);
+
+    return textResult(JSON.stringify({ found: true, data }, null, 2));
+  }
+
+  return errorResult("The 'action' parameter must be 'save' or 'load'.");
+}
+
+async function handleInterrupt(args: Record<string, unknown>) {
+  const client = await getClient();
+  if (!client) {
+    return errorResult(
+      "Not authenticated with HeadsDown. Run the headsdown_auth tool to connect your account.",
+    );
+  }
+
+  const handle =
+    typeof args.handle === "string" && args.handle.trim() ? args.handle.trim() : "claude-code";
+
+  const actorClient = withActorContext(client, "headsdown_interrupt");
+  const result: InterruptResult = await actorClient.evaluateInterrupt(handle);
+
+  const guidance = result.allowed
+    ? "You may proceed with the interrupt."
+    : result.autoResponse
+      ? `Do not interrupt. Respond with: "${result.autoResponse}"`
+      : "Do not interrupt. Continue working without asking.";
+
+  return textResult(
+    JSON.stringify(
+      {
+        allowed: result.allowed,
+        reason: result.reason,
+        autoResponse: result.autoResponse,
+        guidance,
+      },
+      null,
+      2,
+    ),
   );
 }
 
@@ -1022,10 +1211,11 @@ function formatAvailabilitySummary(
 ): string {
   const parts: string[] = [];
 
+  // Axis 1: availability mode (user-set)
   if (!contract) {
-    parts.push("No active availability contract. The user has not set their status.");
+    parts.push("Axis 1 — Availability mode: not set (no active contract).");
   } else {
-    parts.push(`Mode: ${contract.mode}`);
+    parts.push(`Axis 1 — Availability mode (user-set): ${contract.mode}`);
 
     if (contract.statusText) {
       const emoji = contract.statusEmoji ? `${contract.statusEmoji} ` : "";
@@ -1045,6 +1235,18 @@ function formatAvailabilitySummary(
     if (contract.autoRespond) parts.push("Auto-respond is enabled");
   }
 
+  // Axis 2: execution directive (schedule-derived, independent of mode)
+  const directive = resolveExecutionDirective({ contract, schedule: availability });
+  if (directive) {
+    parts.push(`Axis 2 — Execution directive (schedule-derived): ${directive.directiveCode}`);
+    parts.push(`Execution directive summary: ${directive.summary}`);
+    if (directive.hardLimits.avoidNewRefactors) parts.push("Hard limit: avoid new refactors");
+    if (directive.hardLimits.requireHandoffIfIncomplete)
+      parts.push("Hard limit: require handoff notes if incomplete");
+    if (directive.hardLimits.requireConfirmationBeforeLargeChanges)
+      parts.push("Hard limit: confirm before large changes");
+  }
+
   if (availability.inReachableHours) {
     parts.push("Currently in available hours.");
   } else {
@@ -1059,20 +1261,11 @@ function formatAvailabilitySummary(
 
   if (availability.wrapUpGuidance?.active) {
     const remaining = availability.wrapUpGuidance.remainingMinutes;
-    const mode = availability.wrapUpGuidance.selectedMode;
     const reason = availability.wrapUpGuidance.reason;
     const timing = typeof remaining === "number" ? `${remaining} minutes remaining` : "active";
-    parts.push(`Wrap-Up guidance: ${timing} (${mode})`);
+    parts.push(`Wrap-Up guidance: ${timing}`);
     if (reason) {
       parts.push(`Wrap-Up reason: ${reason}`);
-    }
-
-    const instruction = resolveExecutionInstruction({
-      contract,
-      schedule: availability,
-    });
-    if (instruction) {
-      parts.push(`Wrap-Up instruction: ${instruction}`);
     }
   }
 

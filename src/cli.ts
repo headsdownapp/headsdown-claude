@@ -6,10 +6,19 @@
  * hooks and commands run as shell scripts and can't call MCP tools directly.
  */
 
-import { readFile } from "node:fs/promises";
+import { readFile, writeFile, unlink, access } from "node:fs/promises";
+import { join, dirname } from "node:path";
+import { homedir } from "node:os";
+import { mkdirSync } from "node:fs";
 import * as HeadsDownSDK from "@headsdown/sdk";
 import { HeadsDownClient, ConfigStore, ProposalStateStore, AuthError } from "@headsdown/sdk";
-import type { ActorContext, Contract, ScheduleResolution, Verdict } from "@headsdown/sdk";
+import type {
+  ActorContext,
+  Contract,
+  OutcomeInput,
+  ScheduleResolution,
+  Verdict,
+} from "@headsdown/sdk";
 
 const command = process.argv[2];
 
@@ -27,6 +36,10 @@ async function main() {
       return await digestCount();
     case "next-window":
       return await nextWindow();
+    case "continuation":
+      return await continuation();
+    case "report":
+      return await report();
     default:
       process.exit(1);
   }
@@ -48,6 +61,7 @@ async function status() {
           contract,
           schedule: availability,
         }),
+        remainingMinutes: availability.wrapUpGuidance?.remainingMinutes ?? null,
       },
       null,
       2,
@@ -140,6 +154,51 @@ async function digestCount() {
   const actorClient = withActorContext(client, "cli-digest-count");
   const summaries = await actorClient.listDigestSummaries({ latest: 50 });
   console.log(String(summaries.length));
+}
+
+const CONTINUATION_PATH = join(homedir(), ".config", "headsdown", "continuation.json");
+
+/**
+ * Manage continuation artifacts for resumable work sessions.
+ * Subcommands: save (reads JSON from stdin), load (outputs and deletes), check (exits 0/1).
+ */
+async function continuation() {
+  const subcommand = process.argv[3];
+
+  switch (subcommand) {
+    case "save": {
+      // Read JSON from stdin
+      const chunks: Buffer[] = [];
+      for await (const chunk of process.stdin) {
+        chunks.push(chunk as Buffer);
+      }
+      const data = Buffer.concat(chunks).toString("utf-8").trim();
+      if (!data) {
+        process.exit(1);
+      }
+      // Validate it's valid JSON
+      JSON.parse(data);
+      mkdirSync(dirname(CONTINUATION_PATH), { recursive: true });
+      await writeFile(CONTINUATION_PATH, data, { mode: 0o600 });
+      break;
+    }
+    case "load": {
+      const raw = await readFile(CONTINUATION_PATH, "utf-8");
+      console.log(raw);
+      await unlink(CONTINUATION_PATH);
+      break;
+    }
+    case "check": {
+      try {
+        await access(CONTINUATION_PATH);
+      } catch {
+        process.exit(1);
+      }
+      break;
+    }
+    default:
+      process.exit(1);
+  }
 }
 
 function resolveExecutionInstruction(input: {
@@ -257,6 +316,37 @@ function formatSummary(contract: Contract | null, availability: ScheduleResoluti
   }
 
   return parts.join(", ");
+}
+
+/**
+ * Auto-report task outcome at session end.
+ * Reads the latest approved proposal from ProposalStateStore and calls reportOutcome.
+ * Outcome: partially_completed if a continuation artifact exists, completed otherwise.
+ * Exits silently on any error — must never disrupt session end.
+ */
+async function report() {
+  const store = new ProposalStateStore();
+  const proposal = await store.getLatestApproved();
+  if (!proposal) {
+    process.exit(0);
+  }
+
+  let outcome: OutcomeInput["outcome"] = "completed";
+  try {
+    await access(CONTINUATION_PATH);
+    outcome = "partially_completed";
+  } catch {
+    // No continuation file — task completed normally
+  }
+
+  try {
+    const client = await HeadsDownClient.fromCredentials();
+    const actorClient = withActorContext(client, "cli-report");
+    const input: OutcomeInput = { proposalId: proposal.id, outcome };
+    await actorClient.reportOutcome(input);
+  } catch {
+    // Don't disrupt session end for any reason
+  }
 }
 
 main().catch((error) => {

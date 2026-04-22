@@ -3,12 +3,14 @@
 [HeadsDown](https://headsdown.app) availability plugin for Claude Code. Gives Claude awareness of your focus mode, schedule, and availability before it starts tasks — and keeps it aware throughout.
 
 When installed, Claude will:
-1. **Know your availability from the start** via a SessionStart hook that injects your current mode, active window, time remaining, upcoming transitions, and wrap-up guidance
+1. **Know your availability from the start** via a SessionStart hook that injects your current mode, execution directive, remaining attention budget, upcoming transitions, and continuation artifacts from previous sessions
 2. **Check before starting work** via a skill that teaches Claude to submit task proposals for verdict
 3. **Respect your focus time** by scoping work appropriately, deferring when you're busy, and producing handoff notes when time runs out
 4. **Track scope during work** via a PostToolUse hook that counts file modifications and warns when edits outrun the approved estimate
 5. **Survive context compaction** via a PreCompact hook that preserves proposal context so Claude can resume cleanly after the context window is rebuilt
-6. **Show what you missed** via a digest of notifications that arrived during focus mode, with offers to queue actionable items as follow-up proposals
+6. **Resume sessions** via continuation artifacts — Claude saves progress on wrap-up and picks up where it left off next session
+7. **Auto-report outcomes** via a Stop hook that records completed/partially_completed when the session ends
+8. **Gate interruptions** by checking whether it's appropriate to ask you a question before breaking your focus
 
 ## Install
 
@@ -53,13 +55,25 @@ This starts a Device Flow: you visit a URL, enter a code, and the API key is sav
 
 Every time Claude Code starts a session, the hook injects your current availability into Claude's context before you say anything:
 
-- Current mode, status text, and time remaining
+- **Axis 1** — availability mode (user-set): online/busy/limited/offline
+- **Axis 2** — execution directive (schedule-derived): proceed/proceed_with_caution/defer, with machine-readable `hardLimits`
 - Whether you're in available hours and which window is active
+- Remaining attention budget in minutes (when a window is ending)
 - Wrap-up execution guidance (when near a deadline)
-- Upcoming window transition warning if one is within 60 minutes (e.g., "Work hours end in 45 minutes — wrap-up threshold at 15 minutes")
+- Upcoming window transition warning if one is within 60 minutes
 - Pending digest count if notifications arrived during your last focus session
+- Continuation prompt if a previous session left resumable work
 
 If you're not authenticated or the API is unreachable, the hook exits silently (no disruption).
+
+### Stop Hook
+
+When a Claude session ends, the hook automatically reports task outcome to HeadsDown:
+
+- `completed` — if the session ended normally with no continuation artifact
+- `partially_completed` — if a continuation artifact exists (work was deferred)
+
+This closes the feedback loop for calibration without requiring Claude to remember to call `headsdown_report`. Manual reporting is still needed for `failed`, `cancelled`, or `timed_out` outcomes.
 
 ### PreToolUse Hook (Write/Edit)
 
@@ -102,11 +116,19 @@ Quick slash command for direct access:
 
 A SKILL.md that teaches Claude when and how to check availability. Claude loads this contextually before starting tasks, so it knows to check your status and submit proposals for non-trivial work.
 
+Key behaviors the skill teaches:
+- Read both axes (mode + execution directive) before starting
+- Decompose tasks that exceed the remaining attention budget into window-sized slices
+- Match commit cadence to execution policy (frequent small commits in wrap_up, batched in full_depth)
+- Gate non-critical mid-task questions through `headsdown_interrupt`
+- Save continuation artifacts on wrap-up; resume from them next session
+- Cross-reference digest entries with current work; surface only relevant items in busy/limited mode
+
 ### MCP Tools
 
-Seven tools registered via the plugin's MCP server:
+Nine tools registered via the plugin's MCP server:
 
-**`headsdown_status`** - Check your current availability. Returns mode, status message, time remaining, and availability state.
+**`headsdown_status`** - Check your current availability. Returns both axes: `mode` (user-set) and `executionDirective` (schedule-derived with `code`, `summary`, `hardLimits`).
 
 **`headsdown_propose`** - Submit a task proposal. Returns a verdict:
 - **Approved**: Claude proceeds
@@ -119,6 +141,25 @@ Seven tools registered via the plugin's MCP server:
 | `estimated_minutes` | No | Expected duration |
 | `scope_summary` | No | Which modules, what kind of changes |
 | `source_ref` | No | Ticket number, PR URL, etc. |
+| `delivery_mode` | No | `auto` (default), `wrap_up`, or `full_depth` to override execution policy |
+
+**`headsdown_interrupt`** - Check whether it's appropriate to interrupt the user mid-task. Call this before asking non-critical clarifying questions. Returns `{ allowed, reason, autoResponse }` — if `allowed` is false, use `autoResponse` text instead of asking.
+
+| Parameter | Required | Description |
+|-----------|----------|-------------|
+| `handle` | No | Interrupt type: `clarifying_question`, `scope_change`, `error`, `status_update` |
+
+**`headsdown_continuation`** - Save or load a structured continuation artifact for resumable work sessions.
+
+| Parameter | Required | Description |
+|-----------|----------|-------------|
+| `action` | Yes | `save` or `load` |
+| `branch` | No | Current git branch (for save) |
+| `completed_steps` | No | Steps finished this session (for save) |
+| `pending_steps` | No | Steps remaining (for save) |
+| `dirty_files` | No | Files with uncommitted changes (for save) |
+| `open_decisions` | No | Questions needing user input (for save) |
+| `resume_instruction` | No | One-sentence next-step for the next session (for save) |
 
 **`headsdown_digest`** - View notifications and messages that arrived during focus time. Returns grouped summaries by source and actor. Read-only.
 
@@ -153,7 +194,7 @@ Seven tools registered via the plugin's MCP server:
 | `expires_at` | No | Absolute expiry for set |
 | `reason` | No | Optional reason for set/clear |
 
-**`headsdown_report`** - Report the outcome of a task approved via `headsdown_propose`. Helps HeadsDown calibrate future verdicts.
+**`headsdown_report`** - Report the outcome of a task approved via `headsdown_propose`. The Stop hook auto-reports `completed`/`partially_completed` at session end; call this manually for `failed`, `cancelled`, or `timed_out`.
 
 | Parameter | Required | Description |
 |-----------|----------|-------------|
@@ -193,7 +234,8 @@ You set your focus mode in HeadsDown (busy for 2 hours)
 Claude Code starts a session
          │
          ▼
-SessionStart hook ──► [HeadsDown] Mode: busy, 🔨 Deep work, 120min remaining
+SessionStart hook ──► [HeadsDown] Axis 1 (mode): busy | Axis 2 (directive): proceed_with_caution
+                                  Remaining attention budget: 45 minutes
          │
          ▼
 Claude already knows your status. User asks for a big refactor.
@@ -202,8 +244,15 @@ Claude already knows your status. User asks for a big refactor.
 headsdown_propose ──► { decision: "deferred", reason: "..." }
          │
          ▼
-Claude tells you: "You're in focus mode. Want me to defer this,
-                   or should I scope it down to a quick fix?"
+Claude tells you: "You're in focus mode with 45 minutes left.
+                   I can do the types layer now and defer the rest."
+         │
+         ▼
+Session ends
+         │
+         ▼
+Stop hook ──► headsdown_report: partially_completed (continuation artifact exists)
+Next session ──► [Continuation] Branch: main. 2 steps remaining. Resume: finish service layer tests.
 ```
 
 ## Plugin Structure
@@ -219,17 +268,18 @@ headsdown-claude/
 │   └── headsdown.md          # /headsdown slash command
 ├── hooks/
 │   ├── hooks.json            # Hook configuration
-│   ├── session-start.sh      # Injects availability at session start
+│   ├── session-start.sh      # Injects availability at session start (SessionStart)
+│   ├── session-end.sh        # Auto-reports outcome at session end (Stop)
 │   ├── check-availability.sh # Gates file modifications by mode (PreToolUse)
 │   ├── post-tool-use.sh      # Tracks file modification count (PostToolUse)
-│   └── pre-compact.sh        # Preserves proposal context before compaction
+│   └── pre-compact.sh        # Preserves proposal context before compaction (PreCompact)
 ├── .mcp.json                 # MCP server config
 ├── src/
 │   ├── index.ts              # MCP server entry point
-│   ├── server.ts             # Tool handlers
+│   ├── server.ts             # Tool handlers (9 tools)
 │   └── cli.ts                # Lightweight CLI for hooks/commands
 ├── test/
-│   └── server.test.ts        # 82 tests
+│   └── server.test.ts        # 117 tests
 ├── package.json
 └── README.md
 ```
@@ -247,9 +297,9 @@ This plugin is a thin wrapper around the [HeadsDown SDK](https://github.com/head
 
 **What is sent:** Task descriptions and scope estimates (when you submit proposals), your API key for authentication, and actor context metadata (`source`, `agentId`, `sessionId`, `workspaceRef`) for delegated authorization paths.
 
-**What is received:** Your availability status, availability state, task verdicts, and digest summaries (aggregated notifications).
+**What is received:** Your availability status, execution directive, task verdicts, and digest summaries (aggregated notifications).
 
-**What is stored locally:** Your API key at `~/.config/headsdown/credentials.json` (0600 permissions).
+**What is stored locally:** Your API key at `~/.config/headsdown/credentials.json` (0600 permissions). Continuation artifacts at `~/.config/headsdown/continuation.json` (0600 permissions, consumed on next session load).
 
 No telemetry. No analytics. No third-party requests.
 
