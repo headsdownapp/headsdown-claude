@@ -22,6 +22,7 @@ if echo "$output" | jq -e . > /dev/null 2>&1; then
   status_text=$(echo "$output" | jq -r '.contract.statusText // empty')
   summary=$(echo "$output" | jq -r '.summary // empty')
   wrap_up_instruction=$(echo "$output" | jq -r '.wrapUpInstruction // empty')
+  remaining_minutes=$(echo "$output" | jq -r '.remainingMinutes // empty')
   in_reachable_hours=$(echo "$output" | jq -r '.availability.inReachableHours // false')
   active_window_label=$(echo "$output" | jq -r '.availability.activeWindow.label // empty')
 
@@ -49,6 +50,10 @@ if echo "$output" | jq -e . > /dev/null 2>&1; then
 
   if [ -n "$summary" ] && [ "$summary" != "null" ]; then
     context="$context ($summary)"
+  fi
+
+  if [ -n "$remaining_minutes" ] && [ "$remaining_minutes" != "null" ]; then
+    context="$context Remaining attention budget: ${remaining_minutes} minutes."
   fi
 
   if [ -n "$wrap_up_instruction" ] && [ "$wrap_up_instruction" != "null" ]; then
@@ -82,6 +87,31 @@ if echo "$output" | jq -e . > /dev/null 2>&1; then
       context="$context You have 1 digest summary from your last focus session. Use headsdown_digest to review what you missed."
     else
       context="$context You have $digest_count digest summaries from your last focus session. Use headsdown_digest to review what you missed."
+    fi
+  fi
+
+  # Check for a continuation artifact from a previous session
+  if node "$CLI" continuation check 2>/dev/null; then
+    # Peek at the file for a summary — don't consume it; Claude does that via the MCP tool
+    CONTINUATION_FILE="$HOME/.config/headsdown/continuation.json"
+    if [ -f "$CONTINUATION_FILE" ]; then
+      resume=$(jq -r '.resumeInstruction // empty' "$CONTINUATION_FILE" 2>/dev/null)
+      branch=$(jq -r '.branch // empty' "$CONTINUATION_FILE" 2>/dev/null)
+      pending_count=$(jq -r '.pendingSteps | length' "$CONTINUATION_FILE" 2>/dev/null)
+
+      continuation_msg="A previous session left resumable work."
+      if [ -n "$branch" ] && [ "$branch" != "null" ]; then
+        continuation_msg="$continuation_msg Branch: ${branch}."
+      fi
+      if [ -n "$pending_count" ] && [ "$pending_count" != "0" ]; then
+        continuation_msg="$continuation_msg ${pending_count} step(s) remaining."
+      fi
+      if [ -n "$resume" ] && [ "$resume" != "null" ]; then
+        continuation_msg="$continuation_msg Resume: ${resume}"
+      fi
+      continuation_msg="$continuation_msg Call headsdown_continuation with action 'load' for full details."
+
+      context="$context [Continuation] $continuation_msg"
     fi
   fi
 

@@ -6,7 +6,10 @@
  * hooks and commands run as shell scripts and can't call MCP tools directly.
  */
 
-import { readFile } from "node:fs/promises";
+import { readFile, writeFile, unlink, access } from "node:fs/promises";
+import { join, dirname } from "node:path";
+import { homedir } from "node:os";
+import { mkdirSync } from "node:fs";
 import * as HeadsDownSDK from "@headsdown/sdk";
 import { HeadsDownClient, ConfigStore, ProposalStateStore, AuthError } from "@headsdown/sdk";
 import type { ActorContext, Contract, ScheduleResolution, Verdict } from "@headsdown/sdk";
@@ -27,6 +30,8 @@ async function main() {
       return await digestCount();
     case "next-window":
       return await nextWindow();
+    case "continuation":
+      return await continuation();
     default:
       process.exit(1);
   }
@@ -48,6 +53,7 @@ async function status() {
           contract,
           schedule: availability,
         }),
+        remainingMinutes: availability.wrapUpGuidance?.remainingMinutes ?? null,
       },
       null,
       2,
@@ -140,6 +146,51 @@ async function digestCount() {
   const actorClient = withActorContext(client, "cli-digest-count");
   const summaries = await actorClient.listDigestSummaries({ latest: 50 });
   console.log(String(summaries.length));
+}
+
+const CONTINUATION_PATH = join(homedir(), ".config", "headsdown", "continuation.json");
+
+/**
+ * Manage continuation artifacts for resumable work sessions.
+ * Subcommands: save (reads JSON from stdin), load (outputs and deletes), check (exits 0/1).
+ */
+async function continuation() {
+  const subcommand = process.argv[3];
+
+  switch (subcommand) {
+    case "save": {
+      // Read JSON from stdin
+      const chunks: Buffer[] = [];
+      for await (const chunk of process.stdin) {
+        chunks.push(chunk as Buffer);
+      }
+      const data = Buffer.concat(chunks).toString("utf-8").trim();
+      if (!data) {
+        process.exit(1);
+      }
+      // Validate it's valid JSON
+      JSON.parse(data);
+      mkdirSync(dirname(CONTINUATION_PATH), { recursive: true });
+      await writeFile(CONTINUATION_PATH, data, { mode: 0o600 });
+      break;
+    }
+    case "load": {
+      const raw = await readFile(CONTINUATION_PATH, "utf-8");
+      console.log(raw);
+      await unlink(CONTINUATION_PATH);
+      break;
+    }
+    case "check": {
+      try {
+        await access(CONTINUATION_PATH);
+      } catch {
+        process.exit(1);
+      }
+      break;
+    }
+    default:
+      process.exit(1);
+  }
 }
 
 function resolveExecutionInstruction(input: {

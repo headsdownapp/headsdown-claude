@@ -40,13 +40,14 @@ async function createTestClient() {
 
 describe("HeadsDown MCP Server", () => {
   describe("listTools", () => {
-    it("exposes seven tools", async () => {
+    it("exposes eight tools", async () => {
       const client = await createTestClient();
       const result = await client.listTools();
 
       const names = result.tools.map((t) => t.name).sort();
       expect(names).toEqual([
         "headsdown_auth",
+        "headsdown_continuation",
         "headsdown_digest",
         "headsdown_grants",
         "headsdown_override",
@@ -282,6 +283,78 @@ describe("HeadsDown MCP Server", () => {
       expect(auth?.inputSchema.required).toEqual([]);
       expect(Object.keys(auth?.inputSchema.properties as object)).toEqual([]);
     });
+
+    it("continuation tool requires action parameter", async () => {
+      const client = await createTestClient();
+      const result = await client.listTools();
+      const continuation = result.tools.find((t) => t.name === "headsdown_continuation");
+
+      expect(continuation?.inputSchema.required).toEqual(["action"]);
+      const props = continuation?.inputSchema.properties as Record<string, { type: string }>;
+      expect(props.action.type).toBe("string");
+      expect(props.branch.type).toBe("string");
+      expect(props.resume_instruction.type).toBe("string");
+    });
+  });
+
+  describe("headsdown_continuation", () => {
+    it("returns error for invalid action", async () => {
+      const client = await createTestClient();
+      const result = await client.callTool({
+        name: "headsdown_continuation",
+        arguments: { action: "invalid" },
+      });
+
+      const text = (result.content as Array<{ type: string; text: string }>)[0].text;
+      expect(text).toContain("action");
+      expect(result.isError).toBe(true);
+    });
+
+    it("returns error for missing action", async () => {
+      const client = await createTestClient();
+      const result = await client.callTool({
+        name: "headsdown_continuation",
+        arguments: {},
+      });
+
+      const text = (result.content as Array<{ type: string; text: string }>)[0].text;
+      expect(text).toContain("action");
+      expect(result.isError).toBe(true);
+    });
+
+    it("load returns found:false when no continuation artifact exists", async () => {
+      // Temporarily rename any real continuation file so this test is isolated
+      const { rename, stat } = await import("node:fs/promises");
+      const { homedir } = await import("node:os");
+      const realPath = join(homedir(), ".config", "headsdown", "continuation.json");
+      const backupPath = join(homedir(), ".config", "headsdown", "continuation.json.test-bak");
+
+      let hadRealFile = false;
+      try {
+        await stat(realPath);
+        await rename(realPath, backupPath);
+        hadRealFile = true;
+      } catch {
+        // File didn't exist — nothing to move
+      }
+
+      try {
+        const client = await createTestClient();
+        const result = await client.callTool({
+          name: "headsdown_continuation",
+          arguments: { action: "load" },
+        });
+
+        const text = (result.content as Array<{ type: string; text: string }>)[0].text;
+        const parsed = JSON.parse(text);
+        expect(parsed.found).toBe(false);
+        expect(result.isError).toBeFalsy();
+      } finally {
+        if (hadRealFile) {
+          await rename(backupPath, realPath);
+        }
+      }
+    });
   });
 });
 
@@ -408,6 +481,57 @@ describe("Plugin structure", () => {
       expect(content).toContain("list_active");
       expect(content).toContain("headsdown_grants");
     });
+
+    it("documents commit strategy by execution policy", async () => {
+      const skillPath = join(import.meta.dirname, "..", "skills", "headsdown", "SKILL.md");
+      const content = await readFile(skillPath, "utf-8");
+
+      expect(content).toContain("Commit Strategy");
+      expect(content).toContain("wrap_up");
+      expect(content).toContain("full_depth");
+    });
+
+    it("documents smart digest triage by current-work relevance", async () => {
+      const skillPath = join(import.meta.dirname, "..", "skills", "headsdown", "SKILL.md");
+      const content = await readFile(skillPath, "utf-8");
+
+      expect(content).toContain("cross-reference");
+      expect(content).toContain("current working context");
+    });
+
+    it("documents time-aware task planning", async () => {
+      const skillPath = join(import.meta.dirname, "..", "skills", "headsdown", "SKILL.md");
+      const content = await readFile(skillPath, "utf-8");
+
+      expect(content).toContain("Time-Aware Task Planning");
+      expect(content).toContain("remainingMinutes");
+      expect(content).toContain("estimated_minutes");
+      expect(content).toContain("Decompose");
+    });
+
+    it("references headsdown_continuation in the tool list", async () => {
+      const skillPath = join(import.meta.dirname, "..", "skills", "headsdown", "SKILL.md");
+      const content = await readFile(skillPath, "utf-8");
+
+      expect(content).toContain("headsdown_continuation");
+    });
+
+    it("documents session resume guidance", async () => {
+      const skillPath = join(import.meta.dirname, "..", "skills", "headsdown", "SKILL.md");
+      const content = await readFile(skillPath, "utf-8");
+
+      expect(content).toContain("Session Resume");
+      expect(content).toContain("action: load");
+    });
+
+    it("documents continuation save in wrap-up handoff notes", async () => {
+      const skillPath = join(import.meta.dirname, "..", "skills", "headsdown", "SKILL.md");
+      const content = await readFile(skillPath, "utf-8");
+
+      expect(content).toContain("action: save");
+      expect(content).toContain("pending_steps");
+      expect(content).toContain("resume_instruction");
+    });
   });
 
   describe(".mcp.json", () => {
@@ -533,12 +657,41 @@ describe("Plugin structure", () => {
       expect(content).toContain("Wrap-up threshold is");
     });
 
+    it("injects remaining attention budget in minutes", async () => {
+      const scriptPath = join(import.meta.dirname, "..", "hooks", "session-start.sh");
+      const content = await readFile(scriptPath, "utf-8");
+      expect(content).toContain("remaining_minutes");
+      expect(content).toContain("Remaining attention budget:");
+    });
+
     it("exits cleanly when CLI is not built", async () => {
       const scriptPath = join(import.meta.dirname, "..", "hooks", "session-start.sh");
       const content = await readFile(scriptPath, "utf-8");
       // Should check if CLI exists before running
       expect(content).toContain('if [ ! -f "$CLI" ]');
       expect(content).toContain("exit 0");
+    });
+
+    it("checks for a continuation artifact after digest count", async () => {
+      const scriptPath = join(import.meta.dirname, "..", "hooks", "session-start.sh");
+      const content = await readFile(scriptPath, "utf-8");
+      expect(content).toContain("continuation check");
+      expect(content).toContain("continuation.json");
+    });
+
+    it("injects [Continuation] message when artifact exists", async () => {
+      const scriptPath = join(import.meta.dirname, "..", "hooks", "session-start.sh");
+      const content = await readFile(scriptPath, "utf-8");
+      expect(content).toContain("[Continuation]");
+      expect(content).toContain("resumeInstruction");
+    });
+
+    it("instructs Claude to call headsdown_continuation to load artifact", async () => {
+      const scriptPath = join(import.meta.dirname, "..", "hooks", "session-start.sh");
+      const content = await readFile(scriptPath, "utf-8");
+      expect(content).toContain("headsdown_continuation");
+      expect(content).toContain("action");
+      expect(content).toContain("load");
     });
   });
 

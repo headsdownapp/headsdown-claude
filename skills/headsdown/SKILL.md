@@ -9,7 +9,7 @@ This skill connects you to [HeadsDown](https://headsdown.app) so you're aware of
 
 ## MCP Tools Available
 
-This plugin provides seven MCP tools. Use them via normal tool calls:
+This plugin provides eight MCP tools. Use them via normal tool calls:
 
 - **headsdown_status**: Check current availability (mode, availability state, time remaining)
 - **headsdown_propose**: Submit a task proposal for verdict (approved/deferred)
@@ -17,6 +17,7 @@ This plugin provides seven MCP tools. Use them via normal tool calls:
 - **headsdown_grants**: List/create/revoke delegation grants for actor-scoped permissions
 - **headsdown_override**: Get/set/clear temporary availability overrides
 - **headsdown_report**: Report task outcome for calibration (completed/failed/etc.)
+- **headsdown_continuation**: Save/load structured continuation artifacts for resumable work sessions
 - **headsdown_auth**: Authenticate with HeadsDown via Device Flow
 
 ## When to Check
@@ -52,6 +53,16 @@ The status also returns availability window information:
 
 If the status shows `lock: true`, the user explicitly does not want their mode changed. Respect this; don't suggest they change their status.
 
+## Time-Aware Task Planning
+
+After calling `headsdown_status`, check `remainingMinutes` (the attention budget until the current window closes). Compare it to your estimated task duration:
+
+- **Task fits the window:** Proceed normally. Include `estimated_minutes` in your proposal so HeadsDown can calibrate.
+- **Task exceeds the window:** Decompose the task into slices that fit. Propose only the first slice via `headsdown_propose` and note the deferred slices in `scope_summary`. Example: "This refactor has 3 layers: types, service logic, and tests. I can land types + service in 35 minutes. Tests deferred to next window."
+- **`remainingMinutes` is null:** No deadline pressure. Proceed normally.
+
+When slicing, prefer cuts along natural boundaries (modules, layers, test vs. implementation) over arbitrary partial work. Each slice should be independently shippable — it compiles, tests pass, and doesn't leave the codebase in a broken state.
+
 ## Verdict Decisions
 
 When you submit a proposal:
@@ -61,6 +72,15 @@ When you submit a proposal:
   - What the verdict was and why
   - Suggest postponing to a better time
   - Or offer to scope the task down to something smaller
+
+## Commit Strategy
+
+Adapt your commit frequency to the current execution policy:
+
+- **`wrap_up` mode:** Commit after every meaningful change. Smaller, safer commits ensure nothing is lost if the session ends abruptly. Prefer "land what's done" over "one polished commit."
+- **`full_depth` mode:** Batch commits logically. Group related changes into coherent commits that tell a clear story in the git log.
+- **`auto` / no execution policy:** Standard behavior — commit at natural boundaries (after a feature slice, after tests pass, etc.).
+- **`limited` availability:** Commit frequently AND keep each commit independently reviewable, so the user can review in short windows without needing to hold the full context.
 
 ## Mid-Task Scope Escalation
 
@@ -83,6 +103,10 @@ The digest collects notifications and messages that arrived while the user was i
 - Don't overwhelm; if there are many entries, highlight the most recent or highest-count summaries
 - This is read-only. You cannot dismiss or acknowledge digest entries.
 
+**Smart triage — prioritize what matters now:**
+
+When presenting digest entries, cross-reference them with your current working context: the active branch, recently modified files (from git status), and the active proposal description. Entries that relate to the current work come first. In `busy` or `limited` mode, only surface entries relevant to current work unless the user explicitly asks for everything. This keeps catch-up focused and avoids context-switching into unrelated threads.
+
 **Digest follow-up — turning notifications into queued work:**
 
 After summarizing, scan for actionable items: direct requests, assigned issues, flagged PRs, or anything that requires a response or code change. For each actionable item, offer to draft a proposal. Example: "Sarah's Slack message looks like a feature request — want me to propose it as a task?" This closes the loop from "I was in focus mode and missed this" to "here's the follow-up work queued."
@@ -104,6 +128,22 @@ When the execution policy is `wrap_up`, end the session with a brief structured 
 - **Pick up here:** The next concrete step and any relevant file, branch, or ticket reference
 
 Keep it to 3–6 bullets — this is for the user to scan in 30 seconds, not a design doc. If there's nothing deferred, say so explicitly so the user knows the slate is clean.
+
+**Saving a continuation for the next session:**
+
+After producing the handoff, call `headsdown_continuation` with `action: save` to persist structured resumption data. Include:
+- `branch`: current git branch
+- `completed_steps`: what you finished this session
+- `pending_steps`: what's left to do
+- `dirty_files`: any files with uncommitted changes
+- `open_decisions`: questions that need the user's input before work can continue
+- `resume_instruction`: a single sentence telling the next session what to do first
+
+The next session will automatically detect this artifact and offer to resume.
+
+## Session Resume
+
+When the SessionStart context includes `[Continuation]`, a previous session left resumable work. Ask the user if they want to continue from where things left off. If yes, call `headsdown_continuation` with `action: load` to retrieve the full details (branch, pending steps, open decisions, resume instruction), then proceed accordingly. The `load` action consumes the artifact — it won't appear again in future sessions.
 
 ## Delegation and Subagents
 

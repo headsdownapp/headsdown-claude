@@ -1,4 +1,6 @@
-import { writeFile } from "node:fs/promises";
+import { writeFile, readFile, unlink, mkdir, access } from "node:fs/promises";
+import { join, dirname } from "node:path";
+import { homedir } from "node:os";
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { CallToolRequestSchema, ListToolsRequestSchema } from "@modelcontextprotocol/sdk/types.js";
 import * as HeadsDownSDK from "@headsdown/sdk";
@@ -325,6 +327,54 @@ export function createServer(): Server {
           required: ["outcome"],
         },
       },
+      {
+        name: "headsdown_continuation",
+        description:
+          "HeadsDown: Save or load a structured continuation artifact for resumable work sessions. " +
+          "When wrapping up a session, call with action 'save' to persist your progress " +
+          "so the next session can resume where you left off. The next SessionStart hook " +
+          "will detect the continuation and inject it into context.",
+        inputSchema: {
+          type: "object" as const,
+          properties: {
+            action: {
+              type: "string",
+              enum: ["save", "load"],
+              description: "Save continuation data or load (and consume) a previous continuation.",
+            },
+            branch: {
+              type: "string",
+              description: "Current git branch name (for save).",
+            },
+            completed_steps: {
+              type: "array",
+              items: { type: "string" },
+              description: "Steps that were completed in this session (for save).",
+            },
+            pending_steps: {
+              type: "array",
+              items: { type: "string" },
+              description: "Steps remaining to be done (for save).",
+            },
+            dirty_files: {
+              type: "array",
+              items: { type: "string" },
+              description: "Files with uncommitted changes (for save).",
+            },
+            open_decisions: {
+              type: "array",
+              items: { type: "string" },
+              description: "Decisions or questions that need the user's input (for save).",
+            },
+            resume_instruction: {
+              type: "string",
+              description:
+                "A concise instruction for the next session on what to do first (for save).",
+            },
+          },
+          required: ["action"],
+        },
+      },
     ],
   }));
 
@@ -352,6 +402,8 @@ export function createServer(): Server {
           return await handleGrants((args ?? {}) as Record<string, unknown>);
         case "headsdown_override":
           return await handleOverride((args ?? {}) as Record<string, unknown>);
+        case "headsdown_continuation":
+          return await handleContinuation((args ?? {}) as Record<string, unknown>);
         default:
           return errorResult(`Unknown tool: ${name}`);
       }
@@ -858,6 +910,48 @@ function isSessionTokenOnlyGrantError(message: string): boolean {
     message.includes("session-token auth") ||
     message.includes("Delegation grants require session-token auth")
   );
+}
+
+const CONTINUATION_PATH = join(homedir(), ".config", "headsdown", "continuation.json");
+
+async function handleContinuation(args: Record<string, unknown>) {
+  const action = typeof args.action === "string" ? args.action : "";
+
+  if (action === "save") {
+    const data = {
+      branch: typeof args.branch === "string" ? args.branch : null,
+      completedSteps: Array.isArray(args.completed_steps) ? args.completed_steps : [],
+      pendingSteps: Array.isArray(args.pending_steps) ? args.pending_steps : [],
+      dirtyFiles: Array.isArray(args.dirty_files) ? args.dirty_files : [],
+      openDecisions: Array.isArray(args.open_decisions) ? args.open_decisions : [],
+      resumeInstruction:
+        typeof args.resume_instruction === "string" ? args.resume_instruction : null,
+      savedAt: new Date().toISOString(),
+    };
+
+    await mkdir(dirname(CONTINUATION_PATH), { recursive: true });
+    await writeFile(CONTINUATION_PATH, JSON.stringify(data, null, 2), { mode: 0o600 });
+
+    return textResult(JSON.stringify({ saved: true, path: CONTINUATION_PATH, data }, null, 2));
+  }
+
+  if (action === "load") {
+    try {
+      await access(CONTINUATION_PATH);
+    } catch {
+      return textResult(
+        JSON.stringify({ found: false, message: "No continuation artifact found." }, null, 2),
+      );
+    }
+
+    const raw = await readFile(CONTINUATION_PATH, "utf-8");
+    const data = JSON.parse(raw);
+    await unlink(CONTINUATION_PATH);
+
+    return textResult(JSON.stringify({ found: true, data }, null, 2));
+  }
+
+  return errorResult("The 'action' parameter must be 'save' or 'load'.");
 }
 
 function formatGrantCapabilityError(error: unknown): string | null {
