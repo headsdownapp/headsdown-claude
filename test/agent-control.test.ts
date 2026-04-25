@@ -80,6 +80,24 @@ describe("renderHeadsDownCall", () => {
     expect(rendered.text).not.toContain("Trap:");
   });
 
+  it("renders off_the_clock with queue_for_morning action guidance", () => {
+    const rendered = renderHeadsDownCall({
+      key: "off_the_clock",
+      knownKey: "OFF_THE_CLOCK",
+      title: "Off the clock",
+      body: "Non-urgent agent decisions wait until your next work window.",
+      allowedActionKeys: ["queue_for_morning", "keep_queued"],
+      allowedActionKnownKeys: ["QUEUE_FOR_MORNING", "KEEP_QUEUED"],
+      recommendedActionKnownKey: "QUEUE_FOR_MORNING",
+      reasonCodes: ["off_hours"],
+    });
+
+    expect(rendered.intervention).toBe(true);
+    expect(rendered.text).toContain("Off the clock");
+    expect(rendered.text).toContain("Allowed actions: queue_for_morning, keep_queued.");
+    expect(rendered.text).toContain("Use canonical action queue_for_morning.");
+  });
+
   it("uses server copy for unknown call keys while keeping a safe fallback", () => {
     const rendered = renderHeadsDownCall({
       key: "future_call",

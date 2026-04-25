@@ -254,10 +254,10 @@ export async function applyCanonicalAction(
     });
   }
 
-  if (normalizedAction === "resume_run") {
-    await deps.markerStore.clear(runId);
-  } else {
+  if (isQueuedMarkerAction(normalizedAction)) {
     await applyLocalMarkerSemantics(rawInput, normalizedAction, deps.markerStore, deps.now);
+  } else {
+    await deps.markerStore.clear(runId);
   }
 
   return {

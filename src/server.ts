@@ -40,7 +40,9 @@ import type {
 } from "@headsdown/sdk";
 
 const proposalState = new ProposalStateStore();
-const actionMarkerStore = new LocalActionMarkerStore();
+function createActionMarkerStore(): LocalActionMarkerStore {
+  return new LocalActionMarkerStore();
+}
 let activeTracker: CalibrationTracker | null = null;
 
 interface AvailabilityOverride {
@@ -469,6 +471,11 @@ export function createServer(): Server {
             handoff_captured_at: {
               type: "string",
               description: "Optional ISO datetime when handoff was captured.",
+            },
+            handoff_summary: {
+              type: "string",
+              description:
+                "Privacy-safe local handoff summary. Required when action_key is queue_for_morning. Returned on resume_run.",
             },
           },
           required: ["run_id", "action_key"],
@@ -1047,7 +1054,11 @@ function isSessionTokenOnlyGrantError(message: string): boolean {
   );
 }
 
-const CONTINUATION_PATH = join(homedir(), ".config", "headsdown", "continuation.json");
+function continuationPath(): string {
+  const override = process.env.HEADSDOWN_CONTINUATION_PATH?.trim();
+  if (override) return override;
+  return join(homedir(), ".config", "headsdown", "continuation.json");
+}
 
 async function handleContinuation(args: Record<string, unknown>) {
   const action = typeof args.action === "string" ? args.action : "";
@@ -1064,24 +1075,18 @@ async function handleContinuation(args: Record<string, unknown>) {
       savedAt: new Date().toISOString(),
     };
 
-    await mkdir(dirname(CONTINUATION_PATH), { recursive: true });
-    await writeFile(CONTINUATION_PATH, JSON.stringify(data, null, 2), { mode: 0o600 });
+    await writeContinuationArtifact(data);
 
-    return textResult(JSON.stringify({ saved: true, path: CONTINUATION_PATH, data }, null, 2));
+    return textResult(JSON.stringify({ saved: true, path: continuationPath(), data }, null, 2));
   }
 
   if (action === "load") {
-    try {
-      await access(CONTINUATION_PATH);
-    } catch {
+    const data = await loadContinuationArtifact({ consume: true });
+    if (!data) {
       return textResult(
         JSON.stringify({ found: false, message: "No continuation artifact found." }, null, 2),
       );
     }
-
-    const raw = await readFile(CONTINUATION_PATH, "utf-8");
-    const data = JSON.parse(raw);
-    await unlink(CONTINUATION_PATH);
 
     return textResult(JSON.stringify({ found: true, data }, null, 2));
   }
@@ -1094,6 +1099,24 @@ async function handleInterrupt(args: Record<string, unknown>) {
   if (!client) {
     return errorResult(
       "Not authenticated with HeadsDown. Run the headsdown_auth tool to connect your account.",
+    );
+  }
+
+  const offClockMarker = await getActiveOffClockQueueMarker();
+  if (offClockMarker) {
+    return textResult(
+      JSON.stringify(
+        {
+          allowed: false,
+          reason: "off_the_clock_queued_for_morning",
+          autoResponse: "Off the clock. Save the handoff and ask tomorrow.",
+          guidance:
+            "Claude Code controls the model. HeadsDown controls the run. This run stays queued until resume_run succeeds or the user explicitly allows continuation.",
+          runId: offClockMarker.runId,
+        },
+        null,
+        2,
+      ),
     );
   }
 
@@ -1130,11 +1153,50 @@ async function handleApplyAction(args: Record<string, unknown>) {
   }
 
   const actorClient = withActorContext(client, "headsdown_apply_action");
+  const now = new Date();
+  const actionKey = typeof args.action_key === "string" ? args.action_key : "";
+  const normalizedActionKey = normalizeStateToken(actionKey);
+  const queueForMorning = normalizedActionKey === "queue_for_morning";
+  const resumeRun = normalizedActionKey === "resume_run";
+  const handoffSummary = cleanOptionalText(
+    typeof args.handoff_summary === "string" ? args.handoff_summary : null,
+  );
+
+  if (queueForMorning && !handoffSummary) {
+    return errorResult(
+      JSON.stringify(
+        {
+          ok: false,
+          error: {
+            code: "missing_required_input",
+            message:
+              "handoff_summary is required before queue_for_morning can report a saved handoff.",
+            details: { field: "handoff_summary", actionKey: "queue_for_morning" },
+          },
+        },
+        null,
+        2,
+      ),
+    );
+  }
+
+  if (queueForMorning) {
+    await writeContinuationArtifact({
+      branch: null,
+      completedSteps: [],
+      pendingSteps: [handoffSummary],
+      dirtyFiles: [],
+      openDecisions: ["Resume when back on the clock."],
+      resumeInstruction: handoffSummary,
+      runId: cleanOptionalText(typeof args.run_id === "string" ? args.run_id : null),
+      savedAt: now.toISOString(),
+    });
+  }
 
   const result = await applyCanonicalAction(
     {
       runId: typeof args.run_id === "string" ? args.run_id : "",
-      actionKey: typeof args.action_key === "string" ? args.action_key : "",
+      actionKey,
       durationMinutes:
         typeof args.duration_minutes === "number" ? args.duration_minutes : undefined,
       reason: typeof args.reason === "string" ? args.reason : undefined,
@@ -1146,19 +1208,39 @@ async function handleApplyAction(args: Record<string, unknown>) {
           ? args.next_work_window_starts_at
           : undefined,
       handoffAvailable:
-        typeof args.handoff_available === "boolean" ? args.handoff_available : undefined,
+        typeof args.handoff_available === "boolean"
+          ? args.handoff_available
+          : queueForMorning
+            ? true
+            : undefined,
       handoffState:
         typeof args.handoff_state === "string"
           ? (args.handoff_state as "saved" | "missing" | "unknown")
-          : undefined,
-      handoffSource: typeof args.handoff_source === "string" ? args.handoff_source : undefined,
-      handoffKind: typeof args.handoff_kind === "string" ? args.handoff_kind : undefined,
+          : queueForMorning
+            ? "saved"
+            : undefined,
+      handoffSource:
+        typeof args.handoff_source === "string"
+          ? args.handoff_source
+          : queueForMorning
+            ? "claude"
+            : undefined,
+      handoffKind:
+        typeof args.handoff_kind === "string"
+          ? args.handoff_kind
+          : queueForMorning
+            ? "queue_for_morning"
+            : undefined,
       handoffCapturedAt:
-        typeof args.handoff_captured_at === "string" ? args.handoff_captured_at : undefined,
+        typeof args.handoff_captured_at === "string"
+          ? args.handoff_captured_at
+          : queueForMorning
+            ? now.toISOString()
+            : undefined,
     },
     {
-      now: () => new Date(),
-      markerStore: actionMarkerStore,
+      now: () => now,
+      markerStore: createActionMarkerStore(),
       getRunActionContext: async (runId) => {
         const overview = await getAgentControlOverviewCompat(actorClient);
         const runSummary = overview?.runSummaries?.find((run) => run.runId === runId);
@@ -1180,20 +1262,88 @@ async function handleApplyAction(args: Record<string, unknown>) {
   );
 
   if (!result.ok) {
+    if (queueForMorning) {
+      await loadContinuationArtifact({ consume: true });
+    }
+
     return errorResult(JSON.stringify(result, null, 2));
   }
 
-  return textResult(
-    JSON.stringify(
-      {
-        ok: true,
-        mutationInput: result.mutationInput,
-        action: result.payload,
-      },
-      null,
-      2,
-    ),
+  const payload: Record<string, unknown> = {
+    ok: true,
+    mutationInput: result.mutationInput,
+    action: result.payload,
+  };
+
+  if (queueForMorning) {
+    payload.offClock = {
+      queuedForMorning: true,
+      handoffSaved: true,
+      handoffSummary,
+      message: "Off the clock. Save the handoff and ask tomorrow.",
+    };
+  }
+
+  if (resumeRun) {
+    const handoff = await loadContinuationArtifact({ consume: true });
+    payload.offClock = {
+      resumed: true,
+      handoff,
+      message:
+        "Ready to resume. HeadsDown saved the thread so Claude can pick up without starting over.",
+    };
+  }
+
+  return textResult(JSON.stringify(payload, null, 2));
+}
+
+async function writeContinuationArtifact(data: Record<string, unknown>): Promise<void> {
+  const path = continuationPath();
+  await mkdir(dirname(path), { recursive: true });
+  await writeFile(path, JSON.stringify(data, null, 2), { mode: 0o600 });
+}
+
+async function loadContinuationArtifact(options: { consume: boolean }): Promise<unknown | null> {
+  try {
+    await access(continuationPath());
+  } catch {
+    return null;
+  }
+
+  const raw = await readFile(continuationPath(), "utf-8");
+  const parsed = JSON.parse(raw);
+
+  if (options.consume) {
+    await unlink(continuationPath());
+  }
+
+  return parsed;
+}
+
+async function getActiveOffClockQueueMarker(): Promise<{ runId: string } | null> {
+  const markers = await createActionMarkerStore().listActive();
+  const offClockMarker = markers.find(
+    (marker) =>
+      marker.handoffKind === "queue_for_morning" || marker.attemptByAction?.queue_for_morning,
   );
+
+  if (!offClockMarker) {
+    return null;
+  }
+
+  return { runId: offClockMarker.runId };
+}
+
+function normalizeStateToken(value: string | null | undefined): string | null {
+  const cleaned = cleanOptionalText(value);
+  if (!cleaned) return null;
+  return cleaned.toLowerCase().replace(/-/g, "_");
+}
+
+function cleanOptionalText(value: string | null | undefined): string | null {
+  if (typeof value !== "string") return null;
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : null;
 }
 
 function formatGrantCapabilityError(error: unknown): string | null {
