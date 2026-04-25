@@ -12,6 +12,17 @@ if [ ! -f "$CLI" ]; then
   exit 0
 fi
 
+# Check local queued action markers before any backend-dependent status call.
+# A queued Claude run should stay quiet even if HeadsDown is temporarily unreachable.
+queued_marker=$(node "$CLI" action-marker active 2>/dev/null) || queued_marker="null"
+if echo "$queued_marker" | jq -e '.runId' > /dev/null 2>&1; then
+  queued_run_id=$(echo "$queued_marker" | jq -r '.runId')
+  handoff_state=$(echo "$queued_marker" | jq -r '.handoffState // "unknown"')
+  queued_context="[HeadsDown] Queued run ${queued_run_id} is waiting. Handoff state: ${handoff_state}. Do not continue or ask again until HeadsDown returns resume_run or the user explicitly resumes the run."
+  jq -nc --arg systemMessage "$queued_context" '{systemMessage: $systemMessage}'
+  exit 0
+fi
+
 # Try to fetch availability. If it fails (not authenticated, network error),
 # exit cleanly so the session starts without disruption.
 output=$(node "$CLI" status 2>/dev/null) || exit 0
