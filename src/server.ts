@@ -15,6 +15,8 @@ import {
   CalibrationTracker,
   ConfigStore,
 } from "@headsdown/sdk";
+import { getAgentControlOverviewCompat, renderHeadsDownCall } from "./agent-control.js";
+import { getLowLevelGraphQLClient } from "./sdk-compat.js";
 import type {
   ActorContext,
   Contract,
@@ -31,8 +33,6 @@ import type {
   ScheduleResolution,
   Verdict,
 } from "@headsdown/sdk";
-import { getCurrentHeadsDownCallCompat } from "./current-headsdown-call.js";
-import { renderHeadsDownCall } from "./headsdown-call-renderer.js";
 
 const proposalState = new ProposalStateStore();
 let activeTracker: CalibrationTracker | null = null;
@@ -464,12 +464,14 @@ async function handleStatus() {
 
   const actorClient = withActorContext(client, "headsdown_status");
   const { contract, schedule: availability } = await actorClient.getAvailability();
-  const headsdownCall = await getCurrentHeadsDownCallCompat(actorClient);
-  const headsdownCallDisplay = renderHeadsDownCall(headsdownCall);
   const directive = resolveExecutionDirective({ contract, schedule: availability });
   const wrapUpInstruction =
     directive?.primaryDirective ??
     resolveExecutionInstruction({ contract, schedule: availability });
+  const overview = await getAgentControlOverviewCompat(actorClient);
+  const renderedHeadsDownCall = overview?.headsdownCall
+    ? renderHeadsDownCall(overview.headsdownCall)
+    : null;
 
   return textResult(
     JSON.stringify(
@@ -489,9 +491,9 @@ async function handleStatus() {
         // Full objects for callers that need them
         contract,
         availability,
-        headsdownCall,
-        headsdownCallDisplay,
-        summary: formatAvailabilitySummary(contract, availability, headsdownCallDisplay?.summary),
+        headsdownCall: overview?.headsdownCall ?? null,
+        renderedHeadsDownCall,
+        summary: formatAvailabilitySummary(contract, availability, renderedHeadsDownCall?.title),
         wrapUpInstruction,
       },
       null,
@@ -1077,23 +1079,6 @@ function buildDelegationGrantFilterInput(
     workspaceRef: typeof args.workspace_ref === "string" ? args.workspace_ref : undefined,
     agentId: typeof args.agent_id === "string" ? args.agent_id : undefined,
     source: typeof args.source === "string" ? args.source : undefined,
-  };
-}
-
-function getLowLevelGraphQLClient(client: HeadsDownClient): {
-  request: (query: string, variables?: Record<string, unknown>) => Promise<Record<string, unknown>>;
-} | null {
-  const maybeGraphQL = (client as unknown as { graphql?: unknown }).graphql;
-  if (!maybeGraphQL || typeof maybeGraphQL !== "object") return null;
-
-  const request = (maybeGraphQL as { request?: unknown }).request;
-  if (typeof request !== "function") return null;
-
-  return {
-    request: request.bind(maybeGraphQL) as (
-      query: string,
-      variables?: Record<string, unknown>,
-    ) => Promise<Record<string, unknown>>,
   };
 }
 

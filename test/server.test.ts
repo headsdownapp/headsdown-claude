@@ -825,13 +825,19 @@ describe("Plugin structure", () => {
       expect(content).toContain("Axis 2");
     });
 
-    it("injects rendered HeadsDown call copy when available", async () => {
+    it("injects rendered HeadsDown call text before supporting availability context", async () => {
       const scriptPath = join(import.meta.dirname, "..", "hooks", "session-start.sh");
       const content = await readFile(scriptPath, "utf-8");
-      expect(content).toContain("headsdown_call_summary");
-      expect(content).toContain("HeadsDown call:");
-      expect(content).toContain("Claude Code controls the model. HeadsDown controls the run.");
+      expect(content).toContain("renderedHeadsDownCall.text");
+      expect(content).toContain("headsdown_call_text");
+      expect(content).toContain("Supporting availability context");
+    });
+
+    it("escapes session-start system message as compact JSON via jq", async () => {
+      const scriptPath = join(import.meta.dirname, "..", "hooks", "session-start.sh");
+      const content = await readFile(scriptPath, "utf-8");
       expect(content).toContain("jq -nc --arg systemMessage");
+      expect(content).toContain("{systemMessage: $systemMessage}");
     });
   });
 
@@ -946,19 +952,15 @@ describe("Plugin structure", () => {
       expect(content).toContain("Execution policy for this task");
     });
 
-    it("status handler returns wrapUpInstruction in JSON output", async () => {
+    it("status handler returns wrapUpInstruction and rendered HeadsDown call in JSON output", async () => {
       const serverPath = join(import.meta.dirname, "..", "src", "server.ts");
       const content = await readFile(serverPath, "utf-8");
       // handleStatus should include wrapUpInstruction in its JSON output
       expect(content).toContain("wrapUpInstruction");
       // availability object is returned which carries wrapUpGuidance
       expect(content).toContain("availability");
-      expect(content).toContain("headsdownCallDisplay");
-      expect(content).toContain("getCurrentHeadsDownCallCompat");
-
-      const currentCallPath = join(import.meta.dirname, "..", "src", "current-headsdown-call.ts");
-      const currentCallContent = await readFile(currentCallPath, "utf-8");
-      expect(currentCallContent).toContain("CurrentHeadsDownCall");
+      expect(content).toContain("renderedHeadsDownCall");
+      expect(content).toContain("renderHeadsDownCall");
     });
 
     it("propose handler forwards delivery_mode to SDK", async () => {

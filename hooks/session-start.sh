@@ -26,19 +26,19 @@ if echo "$output" | jq -e . > /dev/null 2>&1; then
   execution_directive_summary=$(echo "$output" | jq -r '.executionDirective.summary // empty')
   # Supporting context
   summary=$(echo "$output" | jq -r '.summary // empty')
-  headsdown_call_summary=$(echo "$output" | jq -r '.headsdownCallDisplay.summary // empty')
   wrap_up_instruction=$(echo "$output" | jq -r '.wrapUpInstruction // empty')
   remaining_minutes=$(echo "$output" | jq -r '.availability.wrapUpGuidance.remainingMinutes // empty')
   in_reachable_hours=$(echo "$output" | jq -r '.availability.inReachableHours // false')
   active_window_label=$(echo "$output" | jq -r '.availability.activeWindow.label // empty')
+  headsdown_call_text=$(echo "$output" | jq -r '.renderedHeadsDownCall.text // empty' | tr '\n' ' ' | tr -s ' ')
 
-  # Build context message
-  context="[HeadsDown] User availability at session start:"
-
-  if [ -n "$headsdown_call_summary" ] && [ "$headsdown_call_summary" != "null" ]; then
-    context="$context HeadsDown call: $headsdown_call_summary"
-    context="$context Claude Code controls the model. HeadsDown controls the run."
+  # Build context message. Lead with the HeadsDown call; availability details are supporting context.
+  if [ -n "$headsdown_call_text" ] && [ "$headsdown_call_text" != "null" ]; then
+    context="[HeadsDown] $headsdown_call_text Supporting availability context:"
+  else
+    context="[HeadsDown] Supporting availability context:"
   fi
+
 
   # Axis 1
   if [ "$mode" = "null" ] || [ "$mode" = "unknown" ]; then
