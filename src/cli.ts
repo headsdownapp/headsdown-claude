@@ -19,6 +19,8 @@ import type {
   ScheduleResolution,
   Verdict,
 } from "@headsdown/sdk";
+import { getCurrentHeadsDownCallCompat } from "./current-headsdown-call.js";
+import { renderHeadsDownCall } from "./headsdown-call-renderer.js";
 
 const command = process.argv[2];
 
@@ -50,13 +52,17 @@ async function status() {
   const client = await HeadsDownClient.fromCredentials();
   const actorClient = withActorContext(client, "cli-status");
   const { contract, schedule: availability } = await actorClient.getAvailability();
+  const headsdownCall = await getCurrentHeadsDownCallCompat(actorClient);
+  const headsdownCallDisplay = renderHeadsDownCall(headsdownCall);
 
   console.log(
     JSON.stringify(
       {
         contract,
         availability,
-        summary: formatSummary(contract, availability),
+        headsdownCall,
+        headsdownCallDisplay,
+        summary: formatSummary(contract, availability, headsdownCallDisplay?.summary),
         wrapUpInstruction: resolveExecutionInstruction({
           contract,
           schedule: availability,
@@ -74,7 +80,9 @@ async function summary() {
   const client = await HeadsDownClient.fromCredentials();
   const actorClient = withActorContext(client, "cli-summary");
   const { contract, schedule: availability } = await actorClient.getAvailability();
-  console.log(formatSummary(contract, availability));
+  const headsdownCall = await getCurrentHeadsDownCallCompat(actorClient);
+  const headsdownCallDisplay = renderHeadsDownCall(headsdownCall);
+  console.log(formatSummary(contract, availability, headsdownCallDisplay?.summary));
 }
 
 /** Output current config as JSON. */
@@ -268,8 +276,16 @@ function withActorContext(client: HeadsDownClient, commandName: string): HeadsDo
   return client.withActor(actorContext);
 }
 
-function formatSummary(contract: Contract | null, availability: ScheduleResolution): string {
+function formatSummary(
+  contract: Contract | null,
+  availability: ScheduleResolution,
+  callSummary?: string,
+): string {
   const parts: string[] = [];
+
+  if (callSummary) {
+    parts.push(`HeadsDown call: ${callSummary}`);
+  }
 
   if (!contract) {
     parts.push("No active availability contract.");

@@ -26,6 +26,7 @@ if echo "$output" | jq -e . > /dev/null 2>&1; then
   execution_directive_summary=$(echo "$output" | jq -r '.executionDirective.summary // empty')
   # Supporting context
   summary=$(echo "$output" | jq -r '.summary // empty')
+  headsdown_call_summary=$(echo "$output" | jq -r '.headsdownCallDisplay.summary // empty')
   wrap_up_instruction=$(echo "$output" | jq -r '.wrapUpInstruction // empty')
   remaining_minutes=$(echo "$output" | jq -r '.availability.wrapUpGuidance.remainingMinutes // empty')
   in_reachable_hours=$(echo "$output" | jq -r '.availability.inReachableHours // false')
@@ -33,6 +34,11 @@ if echo "$output" | jq -e . > /dev/null 2>&1; then
 
   # Build context message
   context="[HeadsDown] User availability at session start:"
+
+  if [ -n "$headsdown_call_summary" ] && [ "$headsdown_call_summary" != "null" ]; then
+    context="$context HeadsDown call: $headsdown_call_summary"
+    context="$context Claude Code controls the model. HeadsDown controls the run."
+  fi
 
   # Axis 1
   if [ "$mode" = "null" ] || [ "$mode" = "unknown" ]; then
@@ -126,5 +132,5 @@ if echo "$output" | jq -e . > /dev/null 2>&1; then
   fi
 
   # Output as JSON with systemMessage so Claude sees it in context
-  echo "{\"systemMessage\": \"$context\"}"
+  jq -nc --arg systemMessage "$context" '{systemMessage: $systemMessage}'
 fi
