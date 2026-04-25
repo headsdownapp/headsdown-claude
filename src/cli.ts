@@ -12,6 +12,7 @@ import { homedir } from "node:os";
 import { mkdirSync } from "node:fs";
 import * as HeadsDownSDK from "@headsdown/sdk";
 import { HeadsDownClient, ConfigStore, ProposalStateStore, AuthError } from "@headsdown/sdk";
+import { getAgentControlOverviewCompat, renderHeadsDownCall } from "./agent-control.js";
 import type {
   ActorContext,
   Contract,
@@ -19,8 +20,6 @@ import type {
   ScheduleResolution,
   Verdict,
 } from "@headsdown/sdk";
-import { getCurrentHeadsDownCallCompat } from "./current-headsdown-call.js";
-import { renderHeadsDownCall } from "./headsdown-call-renderer.js";
 
 const command = process.argv[2];
 
@@ -52,17 +51,19 @@ async function status() {
   const client = await HeadsDownClient.fromCredentials();
   const actorClient = withActorContext(client, "cli-status");
   const { contract, schedule: availability } = await actorClient.getAvailability();
-  const headsdownCall = await getCurrentHeadsDownCallCompat(actorClient);
-  const headsdownCallDisplay = renderHeadsDownCall(headsdownCall);
+  const overview = await getAgentControlOverviewCompat(actorClient);
+  const renderedHeadsDownCall = overview?.headsdownCall
+    ? renderHeadsDownCall(overview.headsdownCall)
+    : null;
 
   console.log(
     JSON.stringify(
       {
         contract,
         availability,
-        headsdownCall,
-        headsdownCallDisplay,
-        summary: formatSummary(contract, availability, headsdownCallDisplay?.summary),
+        headsdownCall: overview?.headsdownCall ?? null,
+        renderedHeadsDownCall,
+        summary: formatSummary(contract, availability, renderedHeadsDownCall?.title),
         wrapUpInstruction: resolveExecutionInstruction({
           contract,
           schedule: availability,
@@ -80,9 +81,11 @@ async function summary() {
   const client = await HeadsDownClient.fromCredentials();
   const actorClient = withActorContext(client, "cli-summary");
   const { contract, schedule: availability } = await actorClient.getAvailability();
-  const headsdownCall = await getCurrentHeadsDownCallCompat(actorClient);
-  const headsdownCallDisplay = renderHeadsDownCall(headsdownCall);
-  console.log(formatSummary(contract, availability, headsdownCallDisplay?.summary));
+  const overview = await getAgentControlOverviewCompat(actorClient);
+  const renderedHeadsDownCall = overview?.headsdownCall
+    ? renderHeadsDownCall(overview.headsdownCall)
+    : null;
+  console.log(formatSummary(contract, availability, renderedHeadsDownCall?.title));
 }
 
 /** Output current config as JSON. */
