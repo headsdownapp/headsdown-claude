@@ -824,6 +824,15 @@ describe("Plugin structure", () => {
       expect(content).toContain("Axis 1");
       expect(content).toContain("Axis 2");
     });
+
+    it("injects rendered HeadsDown call copy when available", async () => {
+      const scriptPath = join(import.meta.dirname, "..", "hooks", "session-start.sh");
+      const content = await readFile(scriptPath, "utf-8");
+      expect(content).toContain("headsdown_call_summary");
+      expect(content).toContain("HeadsDown call:");
+      expect(content).toContain("Claude Code controls the model. HeadsDown controls the run.");
+      expect(content).toContain("jq -nc --arg systemMessage");
+    });
   });
 
   describe("hooks/session-end.sh", () => {
@@ -944,6 +953,12 @@ describe("Plugin structure", () => {
       expect(content).toContain("wrapUpInstruction");
       // availability object is returned which carries wrapUpGuidance
       expect(content).toContain("availability");
+      expect(content).toContain("headsdownCallDisplay");
+      expect(content).toContain("getCurrentHeadsDownCallCompat");
+
+      const currentCallPath = join(import.meta.dirname, "..", "src", "current-headsdown-call.ts");
+      const currentCallContent = await readFile(currentCallPath, "utf-8");
+      expect(currentCallContent).toContain("CurrentHeadsDownCall");
     });
 
     it("propose handler forwards delivery_mode to SDK", async () => {

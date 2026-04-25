@@ -31,6 +31,8 @@ import type {
   ScheduleResolution,
   Verdict,
 } from "@headsdown/sdk";
+import { getCurrentHeadsDownCallCompat } from "./current-headsdown-call.js";
+import { renderHeadsDownCall } from "./headsdown-call-renderer.js";
 
 const proposalState = new ProposalStateStore();
 let activeTracker: CalibrationTracker | null = null;
@@ -462,6 +464,8 @@ async function handleStatus() {
 
   const actorClient = withActorContext(client, "headsdown_status");
   const { contract, schedule: availability } = await actorClient.getAvailability();
+  const headsdownCall = await getCurrentHeadsDownCallCompat(actorClient);
+  const headsdownCallDisplay = renderHeadsDownCall(headsdownCall);
   const directive = resolveExecutionDirective({ contract, schedule: availability });
   const wrapUpInstruction =
     directive?.primaryDirective ??
@@ -485,7 +489,9 @@ async function handleStatus() {
         // Full objects for callers that need them
         contract,
         availability,
-        summary: formatAvailabilitySummary(contract, availability),
+        headsdownCall,
+        headsdownCallDisplay,
+        summary: formatAvailabilitySummary(contract, availability, headsdownCallDisplay?.summary),
         wrapUpInstruction,
       },
       null,
@@ -1208,8 +1214,13 @@ async function getClient(): Promise<HeadsDownClient | null> {
 function formatAvailabilitySummary(
   contract: Contract | null,
   availability: ScheduleResolution,
+  callSummary?: string,
 ): string {
   const parts: string[] = [];
+
+  if (callSummary) {
+    parts.push(`HeadsDown call: ${callSummary}`);
+  }
 
   // Axis 1: availability mode (user-set)
   if (!contract) {
