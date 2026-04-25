@@ -1,16 +1,18 @@
 # headsdown-claude
 
-[HeadsDown](https://headsdown.app) availability plugin for Claude Code. Gives Claude awareness of your focus mode, schedule, and availability before it starts tasks — and keeps it aware throughout.
+[HeadsDown](https://headsdown.app) run-governance plugin for Claude Code. It keeps Claude productive inside real-world boundaries like scope, time, off-clock windows, and approval moments.
 
-When installed, Claude will:
-1. **Know your availability from the start** via a SessionStart hook that injects your current mode, execution directive, remaining attention budget, upcoming transitions, and continuation artifacts from previous sessions
-2. **Check before starting work** via a skill that teaches Claude to submit task proposals for verdict
-3. **Respect your focus time** by scoping work appropriately, deferring when you're busy, and producing handoff notes when time runs out
-4. **Track scope during work** via a PostToolUse hook that counts file modifications and warns when edits outrun the approved estimate
-5. **Survive context compaction** via a PreCompact hook that preserves proposal context so Claude can resume cleanly after the context window is rebuilt
-6. **Resume sessions** via continuation artifacts — Claude saves progress on wrap-up and picks up where it left off next session
-7. **Auto-report outcomes** via a Stop hook that records completed/partially_completed when the session ends
-8. **Gate interruptions** by checking whether it's appropriate to ask you a question before breaking your focus
+Claude Code controls the model. HeadsDown controls the run.
+
+When installed, HeadsDown helps Claude:
+1. **Keep scope tight** by checking work against approved slices and warning before scope drifts
+2. **Queue non-urgent asks off the clock** so evening and weekend interruptions wait for the next work window
+3. **Use approval gates** before broad or risky changes
+4. **Render backend-provided rabbit-hole calls** using the same canonical language as every other HeadsDown client
+5. **Pause and save handoffs** when a run should stop or narrow instead of expanding
+6. **Resume without rework** via continuation artifacts saved at wrap-up
+7. **Report outcomes** so future calls improve based on results, not raw content
+8. **Gate interruptions** by checking whether it is the right moment to ask you mid-run
 
 ## Install
 
@@ -48,6 +50,57 @@ Authenticate with HeadsDown after installing:
 Or ask Claude: "Run headsdown_auth to connect my HeadsDown account"
 
 This starts a Device Flow: you visit a URL, enter a code, and the API key is saved locally at `~/.config/headsdown/credentials.json`.
+
+## Why HeadsDown in Claude Code
+
+HeadsDown is not a replacement for Claude model selection. Claude Code already handles Anthropic model behavior, including `/auto`.
+
+HeadsDown value in Claude is run governance:
+- scope control
+- off-clock queueing
+- approval gates
+- rabbit-hole detection and intervention calls from HeadsDown as that Claude flow lands
+- pause and handoff
+- ready-to-resume continuity
+- privacy-safe outcome reporting
+
+Canonical product language and UX guidance live in:
+- [AGENT_CONTROL_BRAND_LANGUAGE.md](https://github.com/headsdownapp/heads_down/blob/main/docs/AGENT_CONTROL_BRAND_LANGUAGE.md)
+- [AGENT_CONTROL_HIGH_FIDELITY_UX.md](https://github.com/headsdownapp/heads_down/blob/main/docs/AGENT_CONTROL_HIGH_FIDELITY_UX.md)
+
+## Run Governance Examples
+
+### Keep it tight
+
+```text
+HEADSDOWN CALL
+Keep it tight
+This is no longer the task you approved. Narrow scope before continuing.
+
+Recommended action: narrow_scope
+```
+
+### Off the clock
+
+```text
+HEADSDOWN CALL
+Off the clock
+Non-urgent work waits for your next work window. Save the handoff and queue for morning.
+
+Recommended action: queue_for_morning
+```
+
+### Rabbit hole detected
+
+Claude can render the canonical call when HeadsDown provides it. The full Claude-specific rabbit-hole reporting and pause flow is tracked separately in headsdownapp/heads_down#934.
+
+```text
+HEADSDOWN CALL
+Rabbit hole detected
+The run is expanding past the approved slice. Pause and summarize before this becomes cleanup work.
+
+Recommended action: pause_and_summarize
+```
 
 ## What's in the Plugin
 
