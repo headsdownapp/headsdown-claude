@@ -31,10 +31,18 @@ queued_marker=$(node "$CLI" action-marker active 2>/dev/null) || queued_marker="
 if echo "$queued_marker" | jq -e '.runId' > /dev/null 2>&1; then
   queued_run_id=$(echo "$queued_marker" | jq -r '.runId')
   handoff_state=$(echo "$queued_marker" | jq -r '.handoffState // "unknown"')
+  queued_action=$(echo "$queued_marker" | jq -r 'if .attemptByAction.queue_for_morning then "queue_for_morning" else (.handoffKind // "unknown") end')
+
+  if [ "$queued_action" = "queue_for_morning" ]; then
+    message="Off the clock. Save the handoff and ask tomorrow. Run ${queued_run_id} is queued (handoff: ${handoff_state}). Do not continue, modify files, or ask again until resume_run succeeds or the user explicitly allows continuation."
+  else
+    message="Run ${queued_run_id} is queued. Handoff state: ${handoff_state}. Do not continue, modify files, or ask again until HeadsDown returns resume_run or the user explicitly resumes the run."
+  fi
+
   cat <<EOF
 {
   "hookSpecificOutput": { "permissionDecision": "deny" },
-  "systemMessage": "[HeadsDown] Run ${queued_run_id} is queued. Handoff state: ${handoff_state}. Do not continue, modify files, or ask again until HeadsDown returns resume_run or the user explicitly resumes the run."
+  "systemMessage": "[HeadsDown] ${message}"
 }
 EOF
   exit 0

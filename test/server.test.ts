@@ -1,7 +1,8 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { mkdtemp, rm, readFile } from "node:fs/promises";
+import { mkdtemp, rm, readFile, access } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
+import { HeadsDownClient } from "@headsdown/sdk";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { createServer } from "../src/server.js";
@@ -10,15 +11,21 @@ import { createServer } from "../src/server.js";
 // Force the server to look for credentials in a temp path that does not exist.
 
 let tempDir: string;
+let continuationPath: string;
 
 beforeEach(async () => {
   tempDir = await mkdtemp(join(tmpdir(), "hd-claude-test-"));
+  continuationPath = join(tempDir, "continuation.json");
   process.env.HEADSDOWN_CREDENTIALS_PATH = join(tempDir, "missing-credentials.json");
+  process.env.HEADSDOWN_ACTION_MARKERS_PATH = join(tempDir, "markers.json");
+  process.env.HEADSDOWN_CONTINUATION_PATH = continuationPath;
 });
 
 afterEach(async () => {
   await rm(tempDir, { recursive: true, force: true });
   delete process.env.HEADSDOWN_CREDENTIALS_PATH;
+  delete process.env.HEADSDOWN_ACTION_MARKERS_PATH;
+  delete process.env.HEADSDOWN_CONTINUATION_PATH;
   vi.restoreAllMocks();
 });
 
@@ -327,6 +334,10 @@ describe("HeadsDown MCP Server", () => {
       expect(props.run_id.type).toBe("string");
       expect(props.action_key.type).toBe("string");
       expect(props.duration_minutes.type).toBe("number");
+      expect(props.handoff_summary.type).toBe("string");
+      expect((props.handoff_summary as { description?: string }).description).toContain(
+        "Required when action_key is queue_for_morning",
+      );
     });
 
     it("continuation tool requires action parameter", async () => {
@@ -354,6 +365,187 @@ describe("HeadsDown MCP Server", () => {
       expect(text).toContain("Not authenticated");
       expect(result.isError).toBe(true);
     });
+
+    it("queues for morning, saves a local handoff, and does not call availability overrides", async () => {
+      const request = vi
+        .fn()
+        .mockResolvedValueOnce({
+          agentControlOverview: {
+            headsdownCall: { key: "off_the_clock" },
+            runSummaries: [
+              {
+                runId: "run-queue",
+                callKey: "off_the_clock",
+                allowedActionKeys: ["queue_for_morning"],
+              },
+            ],
+          },
+        })
+        .mockResolvedValueOnce({
+          applyHeadsdownAction: {
+            ok: true,
+            result: { eventId: "evt-queue", actionKey: "queue_for_morning" },
+          },
+        });
+
+      const createAvailabilityOverride = vi.fn();
+      const cancelAvailabilityOverride = vi.fn();
+      const mockClient = {
+        withActor: vi.fn().mockReturnThis(),
+        graphql: { request },
+        createAvailabilityOverride,
+        cancelAvailabilityOverride,
+      } as unknown as HeadsDownClient;
+
+      vi.spyOn(HeadsDownClient, "fromCredentials").mockResolvedValue(mockClient);
+
+      const client = await createTestClient();
+      const result = await client.callTool({
+        name: "headsdown_apply_action",
+        arguments: {
+          run_id: "run-queue",
+          action_key: "queue_for_morning",
+          handoff_summary: "Resume with one targeted validation.",
+        },
+      });
+
+      const text = (result.content as Array<{ type: string; text: string }>)[0].text;
+      const payload = JSON.parse(text);
+      expect(payload.ok).toBe(true);
+      expect(payload.offClock.queuedForMorning).toBe(true);
+      expect(payload.offClock.handoffSaved).toBe(true);
+      expect(payload.offClock.message).toBe("Off the clock. Save the handoff and ask tomorrow.");
+
+      const continuation = JSON.parse(await readFile(continuationPath, "utf-8"));
+      expect(continuation.resumeInstruction).toBe("Resume with one targeted validation.");
+      expect(continuation.runId).toBe("run-queue");
+
+      expect(createAvailabilityOverride).not.toHaveBeenCalled();
+      expect(cancelAvailabilityOverride).not.toHaveBeenCalled();
+      expect(
+        request.mock.calls.some((call) => String(call[0]).includes("createAvailabilityOverride")),
+      ).toBe(false);
+      expect(
+        request.mock.calls.some((call) => String(call[0]).includes("cancelAvailabilityOverride")),
+      ).toBe(false);
+    });
+
+    it("requires a handoff summary before queue_for_morning reports a saved handoff", async () => {
+      const mockClient = {
+        withActor: vi.fn().mockReturnThis(),
+        graphql: { request: vi.fn() },
+      } as unknown as HeadsDownClient;
+      vi.spyOn(HeadsDownClient, "fromCredentials").mockResolvedValue(mockClient);
+
+      const client = await createTestClient();
+      const result = await client.callTool({
+        name: "headsdown_apply_action",
+        arguments: { run_id: "run-missing-summary", action_key: "queue_for_morning" },
+      });
+
+      const text = (result.content as Array<{ type: string; text: string }>)[0].text;
+      const payload = JSON.parse(text);
+      expect(payload.ok).toBe(false);
+      expect(payload.error.code).toBe("missing_required_input");
+      expect(payload.error.details.field).toBe("handoff_summary");
+      expect(result.isError).toBe(true);
+      await expect(access(continuationPath)).rejects.toBeTruthy();
+    });
+
+    it("removes the saved local handoff if the backend rejects queue_for_morning", async () => {
+      const request = vi
+        .fn()
+        .mockResolvedValueOnce({
+          agentControlOverview: {
+            headsdownCall: { key: "off_the_clock" },
+            runSummaries: [
+              {
+                runId: "run-rejected-queue",
+                callKey: "off_the_clock",
+                allowedActionKeys: ["queue_for_morning"],
+              },
+            ],
+          },
+        })
+        .mockResolvedValueOnce({
+          applyHeadsdownAction: {
+            ok: false,
+            error: { code: "invalid_transition", message: "not allowed", details: {} },
+          },
+        });
+
+      const mockClient = {
+        withActor: vi.fn().mockReturnThis(),
+        graphql: { request },
+      } as unknown as HeadsDownClient;
+      vi.spyOn(HeadsDownClient, "fromCredentials").mockResolvedValue(mockClient);
+
+      const client = await createTestClient();
+      const result = await client.callTool({
+        name: "headsdown_apply_action",
+        arguments: {
+          run_id: "run-rejected-queue",
+          action_key: "queue_for_morning",
+          handoff_summary: "Resume from checkpoint.",
+        },
+      });
+
+      expect(result.isError).toBe(true);
+      await expect(access(continuationPath)).rejects.toBeTruthy();
+    });
+
+    it("returns saved handoff after resume_run succeeds and consumes local continuation", async () => {
+      const { mkdir, writeFile } = await import("node:fs/promises");
+      await mkdir(dirname(continuationPath), { recursive: true });
+      await writeFile(
+        continuationPath,
+        JSON.stringify({
+          runId: "run-resume",
+          pendingSteps: ["Resume from saved checkpoint"],
+          resumeInstruction: "Resume from saved checkpoint",
+        }),
+      );
+
+      const request = vi
+        .fn()
+        .mockResolvedValueOnce({
+          agentControlOverview: {
+            headsdownCall: { key: "ready_to_resume" },
+            runSummaries: [
+              {
+                runId: "run-resume",
+                callKey: "ready_to_resume",
+                allowedActionKeys: ["resume_run"],
+              },
+            ],
+          },
+        })
+        .mockResolvedValueOnce({
+          applyHeadsdownAction: {
+            ok: true,
+            result: { eventId: "evt-resume", actionKey: "resume_run" },
+          },
+        });
+
+      const mockClient = {
+        withActor: vi.fn().mockReturnThis(),
+        graphql: { request },
+      } as unknown as HeadsDownClient;
+      vi.spyOn(HeadsDownClient, "fromCredentials").mockResolvedValue(mockClient);
+
+      const client = await createTestClient();
+      const result = await client.callTool({
+        name: "headsdown_apply_action",
+        arguments: { run_id: "run-resume", action_key: "resume_run" },
+      });
+
+      const text = (result.content as Array<{ type: string; text: string }>)[0].text;
+      const payload = JSON.parse(text);
+      expect(payload.ok).toBe(true);
+      expect(payload.offClock.resumed).toBe(true);
+      expect(payload.offClock.handoff.resumeInstruction).toBe("Resume from saved checkpoint");
+      await expect(access(continuationPath)).rejects.toBeTruthy();
+    });
   });
 
   describe("headsdown_interrupt", () => {
@@ -376,6 +568,62 @@ describe("HeadsDown MCP Server", () => {
       const text = (result.content as Array<{ type: string; text: string }>)[0].text;
       expect(text).toContain("Not authenticated");
       expect(result.isError).toBe(true);
+    });
+
+    it("suppresses interrupts while queue_for_morning is active", async () => {
+      const request = vi
+        .fn()
+        .mockResolvedValueOnce({
+          agentControlOverview: {
+            headsdownCall: { key: "off_the_clock" },
+            runSummaries: [
+              {
+                runId: "run-quiet",
+                callKey: "off_the_clock",
+                allowedActionKeys: ["queue_for_morning"],
+              },
+            ],
+          },
+        })
+        .mockResolvedValueOnce({
+          applyHeadsdownAction: {
+            ok: true,
+            result: { eventId: "evt-quiet", actionKey: "queue_for_morning" },
+          },
+        });
+
+      const evaluateInterrupt = vi.fn().mockResolvedValue({ allowed: true, reason: "ok" });
+      const mockClient = {
+        withActor: vi.fn().mockReturnThis(),
+        graphql: { request },
+        evaluateInterrupt,
+      } as unknown as HeadsDownClient;
+      vi.spyOn(HeadsDownClient, "fromCredentials").mockResolvedValue(mockClient);
+
+      const client = await createTestClient();
+      await client.callTool({
+        name: "headsdown_apply_action",
+        arguments: {
+          run_id: "run-quiet",
+          action_key: "queue_for_morning",
+          handoff_summary: "Ask tomorrow with this checkpoint.",
+        },
+      });
+
+      const interruptResult = await client.callTool({
+        name: "headsdown_interrupt",
+        arguments: { handle: "clarifying_question" },
+      });
+
+      const text = (interruptResult.content as Array<{ type: string; text: string }>)[0].text;
+      const payload = JSON.parse(text);
+      expect(payload.allowed).toBe(false);
+      expect(payload.reason).toBe("off_the_clock_queued_for_morning");
+      expect(payload.autoResponse).toBe("Off the clock. Save the handoff and ask tomorrow.");
+      expect(payload.guidance).toContain(
+        "Claude Code controls the model. HeadsDown controls the run.",
+      );
+      expect(evaluateInterrupt).not.toHaveBeenCalled();
     });
   });
 
@@ -826,6 +1074,7 @@ describe("Plugin structure", () => {
       const scriptPath = join(import.meta.dirname, "..", "hooks", "session-start.sh");
       const content = await readFile(scriptPath, "utf-8");
       expect(content).toContain("action-marker active");
+      expect(content).toContain("attemptByAction.queue_for_morning");
       expect(content).toContain("Queued run");
       expect(content).toContain("until HeadsDown returns resume_run");
     });
@@ -971,6 +1220,7 @@ describe("Plugin structure", () => {
     it("denies writes while a queued action marker is active", async () => {
       const content = await readFile(scriptPath, "utf-8");
       expect(content).toContain("action-marker active");
+      expect(content).toContain("attemptByAction.queue_for_morning");
       expect(content).toContain('"permissionDecision": "deny"');
       expect(content).toContain(
         "Do not continue, modify files, or ask again until HeadsDown returns resume_run",

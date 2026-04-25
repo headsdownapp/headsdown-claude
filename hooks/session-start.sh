@@ -18,7 +18,14 @@ queued_marker=$(node "$CLI" action-marker active 2>/dev/null) || queued_marker="
 if echo "$queued_marker" | jq -e '.runId' > /dev/null 2>&1; then
   queued_run_id=$(echo "$queued_marker" | jq -r '.runId')
   handoff_state=$(echo "$queued_marker" | jq -r '.handoffState // "unknown"')
-  queued_context="[HeadsDown] Queued run ${queued_run_id} is waiting. Handoff state: ${handoff_state}. Do not continue or ask again until HeadsDown returns resume_run or the user explicitly resumes the run."
+  queued_action=$(echo "$queued_marker" | jq -r 'if .attemptByAction.queue_for_morning then "queue_for_morning" else (.handoffKind // "unknown") end')
+
+  if [ "$queued_action" = "queue_for_morning" ]; then
+    queued_context="[HeadsDown] Off the clock. Save the handoff and ask tomorrow. Run ${queued_run_id} is queued (handoff: ${handoff_state}). Do not continue or ask again until resume_run succeeds or the user explicitly allows continuation. Claude Code controls the model. HeadsDown controls the run."
+  else
+    queued_context="[HeadsDown] Queued run ${queued_run_id} is waiting. Handoff state: ${handoff_state}. Do not continue or ask again until HeadsDown returns resume_run or the user explicitly resumes the run."
+  fi
+
   jq -nc --arg systemMessage "$queued_context" '{systemMessage: $systemMessage}'
   exit 0
 fi

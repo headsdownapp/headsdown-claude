@@ -342,6 +342,30 @@ describe("applyCanonicalAction", () => {
     });
   });
 
+  it("clears a queued marker when the user explicitly allows continuation", async () => {
+    await withStore(async (store) => {
+      const queued = await applyCanonicalAction(
+        {
+          runId: "run-explicit-allow",
+          actionKey: "queue_for_morning",
+          handoffAvailable: true,
+          handoffState: "saved",
+          handoffCapturedAt: "2026-04-25T12:00:00.000Z",
+        },
+        deps(store, { allowedActionKeys: ["queue_for_morning", "allow_once"] }),
+      );
+      expect(queued.ok).toBe(true);
+      await expect(store.get("run-explicit-allow")).resolves.not.toBeNull();
+
+      const allowed = await applyCanonicalAction(
+        { runId: "run-explicit-allow", actionKey: "allow_once" },
+        deps(store, { allowedActionKeys: ["queue_for_morning", "allow_once"] }),
+      );
+      expect(allowed.ok).toBe(true);
+      await expect(store.get("run-explicit-allow")).resolves.toBeNull();
+    });
+  });
+
   it("clears a new queue marker when the backend rejects the action", async () => {
     await withStore(async (store) => {
       const result = await applyCanonicalAction(
