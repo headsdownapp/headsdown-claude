@@ -16,6 +16,11 @@ import {
   ConfigStore,
 } from "@headsdown/sdk";
 import { getAgentControlOverviewCompat, renderHeadsDownCall } from "./agent-control.js";
+import {
+  applyCanonicalAction,
+  APPLY_HEADSDOWN_ACTION_MUTATION,
+  LocalActionMarkerStore,
+} from "./headsdown-action-executor.js";
 import { getLowLevelGraphQLClient } from "./sdk-compat.js";
 import type {
   ActorContext,
@@ -35,6 +40,7 @@ import type {
 } from "@headsdown/sdk";
 
 const proposalState = new ProposalStateStore();
+const actionMarkerStore = new LocalActionMarkerStore();
 let activeTracker: CalibrationTracker | null = null;
 
 interface AvailabilityOverride {
@@ -410,6 +416,64 @@ export function createServer(): Server {
           required: [],
         },
       },
+      {
+        name: "headsdown_apply_action",
+        description:
+          "Apply a canonical HeadsDown action key for a specific run. This uses backend action semantics, " +
+          "validates against current allowedActionKeys when available, and returns structured errors for " +
+          "unsupported, not-allowed, and missing-input cases.",
+        inputSchema: {
+          type: "object" as const,
+          properties: {
+            run_id: { type: "string", description: "Target run id." },
+            action_key: {
+              type: "string",
+              description: "Canonical action key, for example queue_for_morning.",
+            },
+            duration_minutes: {
+              type: "number",
+              description:
+                "Required for allow_for_duration. Optional for backend actions that include limits.",
+            },
+            reason: {
+              type: "string",
+              description:
+                "Optional privacy-safe action reason. Do not include prompts, code, file paths, repo names, branch names, logs, terminal output, or message contents.",
+            },
+            idempotency_key: {
+              type: "string",
+              description:
+                "Optional idempotency key. If omitted, Claude generates a retry-stable key.",
+            },
+            resume_eligible_at: {
+              type: "string",
+              description: "Optional ISO datetime for queue/resume metadata.",
+            },
+            next_work_window_starts_at: {
+              type: "string",
+              description: "Optional ISO datetime for queue metadata.",
+            },
+            handoff_available: {
+              type: "boolean",
+              description: "Optional queue/handoff availability flag.",
+            },
+            handoff_state: {
+              type: "string",
+              description: "Optional handoff state: saved, missing, unknown.",
+            },
+            handoff_source: {
+              type: "string",
+              description: "Optional handoff source label. Defaults to claude.",
+            },
+            handoff_kind: { type: "string", description: "Optional handoff kind label." },
+            handoff_captured_at: {
+              type: "string",
+              description: "Optional ISO datetime when handoff was captured.",
+            },
+          },
+          required: ["run_id", "action_key"],
+        },
+      },
     ],
   }));
 
@@ -441,6 +505,8 @@ export function createServer(): Server {
           return await handleContinuation((args ?? {}) as Record<string, unknown>);
         case "headsdown_interrupt":
           return await handleInterrupt((args ?? {}) as Record<string, unknown>);
+        case "headsdown_apply_action":
+          return await handleApplyAction((args ?? {}) as Record<string, unknown>);
         default:
           return errorResult(`Unknown tool: ${name}`);
       }
@@ -1050,6 +1116,79 @@ async function handleInterrupt(args: Record<string, unknown>) {
         reason: result.reason,
         autoResponse: result.autoResponse,
         guidance,
+      },
+      null,
+      2,
+    ),
+  );
+}
+
+async function handleApplyAction(args: Record<string, unknown>) {
+  const client = await getClient();
+  if (!client) {
+    return errorResult("Not authenticated with HeadsDown. Run the headsdown_auth tool first.");
+  }
+
+  const actorClient = withActorContext(client, "headsdown_apply_action");
+
+  const result = await applyCanonicalAction(
+    {
+      runId: typeof args.run_id === "string" ? args.run_id : "",
+      actionKey: typeof args.action_key === "string" ? args.action_key : "",
+      durationMinutes:
+        typeof args.duration_minutes === "number" ? args.duration_minutes : undefined,
+      reason: typeof args.reason === "string" ? args.reason : undefined,
+      idempotencyKey: typeof args.idempotency_key === "string" ? args.idempotency_key : undefined,
+      resumeEligibleAt:
+        typeof args.resume_eligible_at === "string" ? args.resume_eligible_at : undefined,
+      nextWorkWindowStartsAt:
+        typeof args.next_work_window_starts_at === "string"
+          ? args.next_work_window_starts_at
+          : undefined,
+      handoffAvailable:
+        typeof args.handoff_available === "boolean" ? args.handoff_available : undefined,
+      handoffState:
+        typeof args.handoff_state === "string"
+          ? (args.handoff_state as "saved" | "missing" | "unknown")
+          : undefined,
+      handoffSource: typeof args.handoff_source === "string" ? args.handoff_source : undefined,
+      handoffKind: typeof args.handoff_kind === "string" ? args.handoff_kind : undefined,
+      handoffCapturedAt:
+        typeof args.handoff_captured_at === "string" ? args.handoff_captured_at : undefined,
+    },
+    {
+      now: () => new Date(),
+      markerStore: actionMarkerStore,
+      getRunActionContext: async (runId) => {
+        const overview = await getAgentControlOverviewCompat(actorClient);
+        const runSummary = overview?.runSummaries?.find((run) => run.runId === runId);
+        if (!runSummary) return null;
+
+        return {
+          sourceState: runSummary.callKey,
+          allowedActionKeys: runSummary.allowedActionKeys ?? [],
+        };
+      },
+      mutateAction: async (input) => {
+        const graphql = getLowLevelGraphQLClient(actorClient);
+        if (!graphql) {
+          throw new Error("HeadsDown action APIs are unavailable in this @headsdown/sdk version.");
+        }
+        return graphql.request(APPLY_HEADSDOWN_ACTION_MUTATION, { input });
+      },
+    },
+  );
+
+  if (!result.ok) {
+    return errorResult(JSON.stringify(result, null, 2));
+  }
+
+  return textResult(
+    JSON.stringify(
+      {
+        ok: true,
+        mutationInput: result.mutationInput,
+        action: result.payload,
       },
       null,
       2,

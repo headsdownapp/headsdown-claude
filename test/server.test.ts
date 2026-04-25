@@ -46,6 +46,7 @@ describe("HeadsDown MCP Server", () => {
 
       const names = result.tools.map((t) => t.name).sort();
       expect(names).toEqual([
+        "headsdown_apply_action",
         "headsdown_auth",
         "headsdown_continuation",
         "headsdown_digest",
@@ -316,6 +317,18 @@ describe("HeadsDown MCP Server", () => {
       expect(props.handle.type).toBe("string");
     });
 
+    it("apply action tool requires run_id and action_key", async () => {
+      const client = await createTestClient();
+      const result = await client.listTools();
+      const applyAction = result.tools.find((t) => t.name === "headsdown_apply_action");
+
+      expect(applyAction?.inputSchema.required).toEqual(["run_id", "action_key"]);
+      const props = applyAction?.inputSchema.properties as Record<string, { type: string }>;
+      expect(props.run_id.type).toBe("string");
+      expect(props.action_key.type).toBe("string");
+      expect(props.duration_minutes.type).toBe("number");
+    });
+
     it("continuation tool requires action parameter", async () => {
       const client = await createTestClient();
       const result = await client.listTools();
@@ -326,6 +339,20 @@ describe("HeadsDown MCP Server", () => {
       expect(props.action.type).toBe("string");
       expect(props.branch.type).toBe("string");
       expect(props.resume_instruction.type).toBe("string");
+    });
+  });
+
+  describe("headsdown_apply_action", () => {
+    it("returns auth error when not authenticated", async () => {
+      const client = await createTestClient();
+      const result = await client.callTool({
+        name: "headsdown_apply_action",
+        arguments: { run_id: "run-1", action_key: "continue" },
+      });
+
+      const text = (result.content as Array<{ type: string; text: string }>)[0].text;
+      expect(text).toContain("Not authenticated");
+      expect(result.isError).toBe(true);
     });
   });
 
@@ -795,6 +822,14 @@ describe("Plugin structure", () => {
       expect(content).toContain("exit 0");
     });
 
+    it("checks for a queued action marker before digest count", async () => {
+      const scriptPath = join(import.meta.dirname, "..", "hooks", "session-start.sh");
+      const content = await readFile(scriptPath, "utf-8");
+      expect(content).toContain("action-marker active");
+      expect(content).toContain("Queued run");
+      expect(content).toContain("until HeadsDown returns resume_run");
+    });
+
     it("checks for a continuation artifact after digest count", async () => {
       const scriptPath = join(import.meta.dirname, "..", "hooks", "session-start.sh");
       const content = await readFile(scriptPath, "utf-8");
@@ -931,6 +966,15 @@ describe("Plugin structure", () => {
       const trustIdx = content.indexOf('case "$trust_level"');
       expect(sensitiveIdx).toBeLessThan(trustIdx);
       expect(content).toContain('"permissionDecision": "ask"');
+    });
+
+    it("denies writes while a queued action marker is active", async () => {
+      const content = await readFile(scriptPath, "utf-8");
+      expect(content).toContain("action-marker active");
+      expect(content).toContain('"permissionDecision": "deny"');
+      expect(content).toContain(
+        "Do not continue, modify files, or ask again until HeadsDown returns resume_run",
+      );
     });
 
     it("reads tool input file path from stdin", async () => {

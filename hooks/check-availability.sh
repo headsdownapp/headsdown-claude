@@ -24,6 +24,22 @@ fi
 input=$(cat)
 file_path=$(echo "$input" | jq -r '.tool_input.file_path // .tool_input.path // .tool_input.filePath // empty' 2>/dev/null)
 
+# --- Respect queued HeadsDown action markers ---
+# When Claude has queued a run for later/morning, keep it quiet until resume_run clears the marker.
+
+queued_marker=$(node "$CLI" action-marker active 2>/dev/null) || queued_marker="null"
+if echo "$queued_marker" | jq -e '.runId' > /dev/null 2>&1; then
+  queued_run_id=$(echo "$queued_marker" | jq -r '.runId')
+  handoff_state=$(echo "$queued_marker" | jq -r '.handoffState // "unknown"')
+  cat <<EOF
+{
+  "hookSpecificOutput": { "permissionDecision": "deny" },
+  "systemMessage": "[HeadsDown] Run ${queued_run_id} is queued. Handoff state: ${handoff_state}. Do not continue, modify files, or ask again until HeadsDown returns resume_run or the user explicitly resumes the run."
+}
+EOF
+  exit 0
+fi
+
 # --- Load config ---
 
 config=$(node "$CLI" config 2>/dev/null) || config='{"trustLevel":"advisory","sensitivePaths":[]}'

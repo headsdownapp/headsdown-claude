@@ -13,6 +13,7 @@ import { mkdirSync } from "node:fs";
 import * as HeadsDownSDK from "@headsdown/sdk";
 import { HeadsDownClient, ConfigStore, ProposalStateStore, AuthError } from "@headsdown/sdk";
 import { getAgentControlOverviewCompat, renderHeadsDownCall } from "./agent-control.js";
+import { LocalActionMarkerStore } from "./headsdown-action-executor.js";
 import type {
   ActorContext,
   Contract,
@@ -41,6 +42,8 @@ async function main() {
       return await continuation();
     case "report":
       return await report();
+    case "action-marker":
+      return await actionMarker();
     default:
       process.exit(1);
   }
@@ -168,6 +171,22 @@ async function digestCount() {
 }
 
 const CONTINUATION_PATH = join(homedir(), ".config", "headsdown", "continuation.json");
+
+/** Manage local action markers used to keep queued runs quiet until resume. */
+async function actionMarker() {
+  const subcommand = process.argv[3];
+  const store = new LocalActionMarkerStore();
+
+  switch (subcommand) {
+    case "active": {
+      const markers = await store.listActive();
+      console.log(JSON.stringify(markers[0] ?? null, null, 2));
+      break;
+    }
+    default:
+      process.exit(1);
+  }
+}
 
 /**
  * Manage continuation artifacts for resumable work sessions.

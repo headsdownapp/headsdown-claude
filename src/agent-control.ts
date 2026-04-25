@@ -27,8 +27,15 @@ export interface HeadsDownCallView {
   privacyMode?: string | null;
 }
 
+export interface AgentRunSummaryView {
+  runId: string;
+  callKey?: string | null;
+  allowedActionKeys?: string[] | null;
+}
+
 export interface AgentControlOverviewView {
   headsdownCall: HeadsDownCallView;
+  runSummaries?: AgentRunSummaryView[] | null;
 }
 
 export interface RenderedHeadsDownCall {
@@ -70,6 +77,11 @@ export const AGENT_CONTROL_OVERVIEW_QUERY = `
         confidence
         evidenceSource
         privacyMode
+      }
+      runSummaries {
+        runId
+        callKey
+        allowedActionKeys
       }
     }
   }
