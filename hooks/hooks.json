@@ -27,7 +27,7 @@
     ],
     "PostToolUse": [
       {
-        "matcher": "Write|Edit|MultiEdit",
+        "matcher": "*",
         "hooks": [
           {
             "type": "command",
