@@ -9,7 +9,7 @@ This skill connects you to [HeadsDown](https://headsdown.app) so you're aware of
 
 ## MCP Tools Available
 
-This plugin provides nine MCP tools. Use them via normal tool calls:
+This plugin provides MCP tools. Use them via normal tool calls:
 
 - **headsdown_status**: Check current availability (mode, execution directive, time remaining)
 - **headsdown_propose**: Submit a task proposal for verdict (approved/deferred)
@@ -17,6 +17,7 @@ This plugin provides nine MCP tools. Use them via normal tool calls:
 - **headsdown_digest**: View notifications and messages that arrived during focus time
 - **headsdown_grants**: List/create/revoke delegation grants for actor-scoped permissions
 - **headsdown_override**: Get/set/clear temporary availability overrides
+- **headsdown_apply_action**: Apply canonical run-governance actions such as `pause_and_summarize` and `allow_for_duration`
 - **headsdown_report**: Report task outcome for calibration (completed/failed/etc.)
 - **headsdown_continuation**: Save/load structured continuation artifacts for resumable work sessions
 - **headsdown_auth**: Authenticate with HeadsDown via Device Flow
@@ -116,6 +117,23 @@ Adapt your commit frequency to the current execution policy:
 If you realize mid-task that you will touch significantly more files or modules than the approved proposal estimated, call `headsdown_propose` again with updated `estimated_files`, `estimated_minutes`, and `scope_summary`. Do not silently overrun the original scope. A new approved verdict is lightweight; an unauthorized scope expansion undermines the availability contract.
 
 Watch for signals that scope has grown: you're editing files in a third module, you've discovered a dependency that requires changes in multiple layers, or the PostToolUse context message notes that your file count has exceeded the estimate. When you see these, pause and re-propose before continuing.
+
+## Rabbit Hole Intervention Flow
+
+When HeadsDown reports this exact call, treat it as a hard intervention moment:
+
+> Rabbit hole detected. Pause before this becomes cleanup work.
+
+Claude Code controls the model. HeadsDown controls the run.
+
+Immediate behavior:
+
+1. Stop broad exploration and retries.
+2. Choose one valid backend action while the call is still `rabbit_hole_detected`.
+3. To pause, call `headsdown_apply_action` once with the target `run_id`, `action_key: "pause_and_summarize"`, and a privacy-safe `handoff_summary` so the run pause and saved handoff move together.
+4. If continuing now is explicitly needed and `allow_for_duration` is allowed, call `headsdown_apply_action` with the target `run_id`, `action_key: "allow_for_duration"`, and `duration_minutes` instead of pausing.
+
+Do not continue open-ended exploration once rabbit-hole intervention is active. Do not call `allow_for_duration` after `pause_and_summarize`; after pause, the run transitions to ready-to-resume semantics.
 
 ## Interrupt Evaluation
 

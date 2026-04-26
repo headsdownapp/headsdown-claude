@@ -52,7 +52,7 @@ const CALL_TEMPLATES: Record<CanonicalHeadsDownCallKey, HeadsDownCallTemplate> =
   },
   rabbit_hole_detected: {
     title: "Rabbit hole detected",
-    body: "The work is growing past the size that was worth approving. Pause, save the handoff, and re-scope before it becomes cleanup work.",
+    body: "Pause before this becomes cleanup work.",
     primaryCta: "Pause + summarize",
   },
   ready_to_resume: {

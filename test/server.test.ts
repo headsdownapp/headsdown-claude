@@ -430,47 +430,25 @@ describe("HeadsDown MCP Server", () => {
       ).toBe(false);
     });
 
-    it("requires a handoff summary before queue_for_morning reports a saved handoff", async () => {
-      const mockClient = {
-        withActor: vi.fn().mockReturnThis(),
-        graphql: { request: vi.fn() },
-      } as unknown as HeadsDownClient;
-      vi.spyOn(HeadsDownClient, "fromCredentials").mockResolvedValue(mockClient);
-
-      const client = await createTestClient();
-      const result = await client.callTool({
-        name: "headsdown_apply_action",
-        arguments: { run_id: "run-missing-summary", action_key: "queue_for_morning" },
-      });
-
-      const text = (result.content as Array<{ type: string; text: string }>)[0].text;
-      const payload = JSON.parse(text);
-      expect(payload.ok).toBe(false);
-      expect(payload.error.code).toBe("missing_required_input");
-      expect(payload.error.details.field).toBe("handoff_summary");
-      expect(result.isError).toBe(true);
-      await expect(access(continuationPath)).rejects.toBeTruthy();
-    });
-
-    it("removes the saved local handoff if the backend rejects queue_for_morning", async () => {
+    it("pauses and summarizes rabbit-hole runs with a saved handoff", async () => {
       const request = vi
         .fn()
         .mockResolvedValueOnce({
           agentControlOverview: {
-            headsdownCall: { key: "off_the_clock" },
+            headsdownCall: { key: "rabbit_hole_detected" },
             runSummaries: [
               {
-                runId: "run-rejected-queue",
-                callKey: "off_the_clock",
-                allowedActionKeys: ["queue_for_morning"],
+                runId: "run-rabbit",
+                callKey: "rabbit_hole_detected",
+                allowedActionKeys: ["pause_and_summarize", "allow_for_duration"],
               },
             ],
           },
         })
         .mockResolvedValueOnce({
           applyHeadsdownAction: {
-            ok: false,
-            error: { code: "invalid_transition", message: "not allowed", details: {} },
+            ok: true,
+            result: { eventId: "evt-rabbit", actionKey: "pause_and_summarize" },
           },
         });
 
@@ -484,14 +462,110 @@ describe("HeadsDown MCP Server", () => {
       const result = await client.callTool({
         name: "headsdown_apply_action",
         arguments: {
-          run_id: "run-rejected-queue",
-          action_key: "queue_for_morning",
-          handoff_summary: "Resume from checkpoint.",
+          run_id: "run-rabbit",
+          action_key: "pause_and_summarize",
+          handoff_summary: "Resume by re-scoping to the validation seam.",
         },
       });
 
-      expect(result.isError).toBe(true);
+      const text = (result.content as Array<{ type: string; text: string }>)[0].text;
+      const payload = JSON.parse(text);
+      expect(payload.ok).toBe(true);
+      expect(payload.rabbitHole).toEqual({
+        pausedAndSummarized: true,
+        handoffSaved: true,
+        handoffSummary: "Resume by re-scoping to the validation seam.",
+        message: "Rabbit hole detected. Pause before this becomes cleanup work.",
+      });
+      expect(payload.mutationInput).toMatchObject({
+        runId: "run-rabbit",
+        actionKey: "pause_and_summarize",
+        sourceState: "rabbit_hole_detected",
+        handoffAvailable: true,
+        handoffState: "SAVED",
+        handoffSource: "claude",
+        handoffKind: "pause_summary",
+      });
+      expect(payload.mutationInput.handoffCapturedAt).toBeTruthy();
+
+      const continuation = JSON.parse(await readFile(continuationPath, "utf-8"));
+      expect(continuation.resumeInstruction).toBe("Resume by re-scoping to the validation seam.");
+      expect(continuation.openDecisions).toEqual(["Re-scope before continuing."]);
+      expect(continuation.runId).toBe("run-rabbit");
+    });
+
+    it("requires a handoff summary before queue_for_morning or pause_and_summarize reports a saved handoff", async () => {
+      const mockClient = {
+        withActor: vi.fn().mockReturnThis(),
+        graphql: { request: vi.fn() },
+      } as unknown as HeadsDownClient;
+      vi.spyOn(HeadsDownClient, "fromCredentials").mockResolvedValue(mockClient);
+
+      const client = await createTestClient();
+
+      for (const actionKey of ["queue_for_morning", "pause_and_summarize"]) {
+        const result = await client.callTool({
+          name: "headsdown_apply_action",
+          arguments: { run_id: `run-missing-summary-${actionKey}`, action_key: actionKey },
+        });
+
+        const text = (result.content as Array<{ type: string; text: string }>)[0].text;
+        const payload = JSON.parse(text);
+        expect(payload.ok).toBe(false);
+        expect(payload.error.code).toBe("missing_required_input");
+        expect(payload.error.details.field).toBe("handoff_summary");
+        expect(payload.error.details.actionKey).toBe(actionKey);
+        expect(result.isError).toBe(true);
+      }
+
       await expect(access(continuationPath)).rejects.toBeTruthy();
+    });
+
+    it("removes the saved local handoff if the backend rejects a handoff action", async () => {
+      for (const [actionKey, callKey] of [
+        ["queue_for_morning", "off_the_clock"],
+        ["pause_and_summarize", "rabbit_hole_detected"],
+      ] as const) {
+        const request = vi
+          .fn()
+          .mockResolvedValueOnce({
+            agentControlOverview: {
+              headsdownCall: { key: callKey },
+              runSummaries: [
+                {
+                  runId: `run-rejected-${actionKey}`,
+                  callKey,
+                  allowedActionKeys: [actionKey],
+                },
+              ],
+            },
+          })
+          .mockResolvedValueOnce({
+            applyHeadsdownAction: {
+              ok: false,
+              error: { code: "invalid_transition", message: "not allowed", details: {} },
+            },
+          });
+
+        const mockClient = {
+          withActor: vi.fn().mockReturnThis(),
+          graphql: { request },
+        } as unknown as HeadsDownClient;
+        vi.spyOn(HeadsDownClient, "fromCredentials").mockResolvedValue(mockClient);
+
+        const client = await createTestClient();
+        const result = await client.callTool({
+          name: "headsdown_apply_action",
+          arguments: {
+            run_id: `run-rejected-${actionKey}`,
+            action_key: actionKey,
+            handoff_summary: "Resume from checkpoint.",
+          },
+        });
+
+        expect(result.isError).toBe(true);
+        await expect(access(continuationPath)).rejects.toBeTruthy();
+      }
     });
 
     it("returns saved handoff after resume_run succeeds and consumes local continuation", async () => {
@@ -737,7 +811,18 @@ describe("Plugin structure", () => {
       expect(content).toContain("headsdown_report");
       expect(content).toContain("headsdown_grants");
       expect(content).toContain("headsdown_override");
+      expect(content).toContain("headsdown_apply_action");
       expect(content).toContain("headsdown_auth");
+    });
+
+    it("documents rabbit-hole run governance framing", async () => {
+      const skillPath = join(import.meta.dirname, "..", "skills", "headsdown", "SKILL.md");
+      const content = await readFile(skillPath, "utf-8");
+
+      expect(content).toContain("Rabbit hole detected. Pause before this becomes cleanup work.");
+      expect(content).toContain("Claude Code controls the model. HeadsDown controls the run.");
+      expect(content).toContain("pause_and_summarize");
+      expect(content).toContain("allow_for_duration");
     });
 
     it("documents all availability modes", async () => {
@@ -1416,8 +1501,32 @@ describe("Plugin structure", () => {
 
     it("reports progress in fail-open mode", async () => {
       const content = await readFile(scriptPath, "utf-8");
-      expect(content).toContain('"$CLI" report-progress "$TOOL_TYPE" "$count"');
-      expect(content).toContain("|| true");
+      expect(content).toContain('node "$CLI" report-progress "$TOOL_TYPE" "$count"');
+      expect(content).toContain('|| progress_json=""');
+    });
+
+    it("surfaces rabbit-hole intervention copy with run-governance framing", async () => {
+      const content = await readFile(scriptPath, "utf-8");
+
+      expect(content).toContain("rabbitHoleDetected");
+      expect(content).toContain("Rabbit hole detected. Pause before this becomes cleanup work.");
+      expect(content).toContain("Claude Code controls the model. HeadsDown controls the run.");
+      expect(content).toContain("headsdown_apply_action");
+      expect(content).toContain("run_id");
+      expect(content).toContain("pause_and_summarize");
+      expect(content).toContain("handoff_summary");
+      expect(content).toContain("allow_for_duration");
+      expect(content).toContain("Do not call allow_for_duration after pause_and_summarize");
+      expect(content).toContain("check headsdown_status to re-establish the target run");
+    });
+
+    it("builds rabbit-hole state from active run summaries", async () => {
+      const cliPath = join(import.meta.dirname, "..", "src", "cli.ts");
+      const content = await readFile(cliPath, "utf-8");
+
+      expect(content).toContain("buildReportProgressResponse");
+      expect(content).toContain("activeRun");
+      expect(content).toContain("overview");
     });
 
     it("uses [HeadsDown] prefix in system messages", async () => {

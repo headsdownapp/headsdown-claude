@@ -477,7 +477,7 @@ export function createServer(): Server {
             handoff_summary: {
               type: "string",
               description:
-                "Privacy-safe local handoff summary. Required when action_key is queue_for_morning. Returned on resume_run.",
+                "Privacy-safe local handoff summary. Required when action_key is queue_for_morning or pause_and_summarize. Returned on resume_run.",
             },
           },
           required: ["run_id", "action_key"],
@@ -1180,21 +1180,22 @@ async function handleApplyAction(args: Record<string, unknown>) {
   const actionKey = typeof args.action_key === "string" ? args.action_key : "";
   const normalizedActionKey = normalizeStateToken(actionKey);
   const queueForMorning = normalizedActionKey === "queue_for_morning";
+  const pauseAndSummarize = normalizedActionKey === "pause_and_summarize";
   const resumeRun = normalizedActionKey === "resume_run";
+  const savesHandoff = queueForMorning || pauseAndSummarize;
   const handoffSummary = cleanOptionalText(
     typeof args.handoff_summary === "string" ? args.handoff_summary : null,
   );
 
-  if (queueForMorning && !handoffSummary) {
+  if (savesHandoff && !handoffSummary) {
     return errorResult(
       JSON.stringify(
         {
           ok: false,
           error: {
             code: "missing_required_input",
-            message:
-              "handoff_summary is required before queue_for_morning can report a saved handoff.",
-            details: { field: "handoff_summary", actionKey: "queue_for_morning" },
+            message: `handoff_summary is required before ${normalizedActionKey} can report a saved handoff.`,
+            details: { field: "handoff_summary", actionKey: normalizedActionKey },
           },
         },
         null,
@@ -1203,13 +1204,15 @@ async function handleApplyAction(args: Record<string, unknown>) {
     );
   }
 
-  if (queueForMorning) {
+  if (savesHandoff) {
     await writeContinuationArtifact({
       branch: null,
       completedSteps: [],
       pendingSteps: [handoffSummary],
       dirtyFiles: [],
-      openDecisions: ["Resume when back on the clock."],
+      openDecisions: [
+        pauseAndSummarize ? "Re-scope before continuing." : "Resume when back on the clock.",
+      ],
       resumeInstruction: handoffSummary,
       runId: cleanOptionalText(typeof args.run_id === "string" ? args.run_id : null),
       savedAt: now.toISOString(),
@@ -1233,31 +1236,33 @@ async function handleApplyAction(args: Record<string, unknown>) {
       handoffAvailable:
         typeof args.handoff_available === "boolean"
           ? args.handoff_available
-          : queueForMorning
+          : savesHandoff
             ? true
             : undefined,
       handoffState:
         typeof args.handoff_state === "string"
           ? (args.handoff_state as "saved" | "missing" | "unknown")
-          : queueForMorning
+          : savesHandoff
             ? "saved"
             : undefined,
       handoffSource:
         typeof args.handoff_source === "string"
           ? args.handoff_source
-          : queueForMorning
+          : savesHandoff
             ? "claude"
             : undefined,
       handoffKind:
         typeof args.handoff_kind === "string"
           ? args.handoff_kind
-          : queueForMorning
-            ? "queue_for_morning"
-            : undefined,
+          : pauseAndSummarize
+            ? "pause_summary"
+            : queueForMorning
+              ? "queue_for_morning"
+              : undefined,
       handoffCapturedAt:
         typeof args.handoff_captured_at === "string"
           ? args.handoff_captured_at
-          : queueForMorning
+          : savesHandoff
             ? now.toISOString()
             : undefined,
     },
@@ -1285,7 +1290,7 @@ async function handleApplyAction(args: Record<string, unknown>) {
   );
 
   if (!result.ok) {
-    if (queueForMorning) {
+    if (savesHandoff) {
       await loadContinuationArtifact({ consume: true });
     }
 
@@ -1304,6 +1309,15 @@ async function handleApplyAction(args: Record<string, unknown>) {
       handoffSaved: true,
       handoffSummary,
       message: "Off the clock. Save the handoff and ask tomorrow.",
+    };
+  }
+
+  if (pauseAndSummarize) {
+    payload.rabbitHole = {
+      pausedAndSummarized: true,
+      handoffSaved: true,
+      handoffSummary,
+      message: "Rabbit hole detected. Pause before this becomes cleanup work.",
     };
   }
 

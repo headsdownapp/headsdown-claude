@@ -80,6 +80,21 @@ describe("renderHeadsDownCall", () => {
     expect(rendered.text).not.toContain("Trap:");
   });
 
+  it("renders rabbit-hole fallback copy from canonical key when knownKey is omitted", () => {
+    const rendered = renderHeadsDownCall({
+      key: "rabbit_hole_detected",
+      allowedActionKeys: ["pause_and_summarize"],
+    });
+
+    expect(rendered.safeFallback).toBe(false);
+    expect(rendered.title).toBe("Rabbit hole detected");
+    expect(rendered.text).toContain(
+      "Rabbit hole detected.\nPause before this becomes cleanup work.",
+    );
+    expect(rendered.text).toContain("Allowed actions: pause_and_summarize.");
+    expect(rendered.text).toContain("Claude Code controls the model. HeadsDown controls the run.");
+  });
+
   it("renders off_the_clock with queue_for_morning action guidance", () => {
     const rendered = renderHeadsDownCall({
       key: "off_the_clock",
