@@ -48,6 +48,16 @@ export interface RenderedHeadsDownCall {
   allowedActionKeys: string[];
 }
 
+const CANONICAL_CALL_KEYS = new Set([
+  "good_to_run",
+  "keep_it_tight",
+  "not_worth_starting_now",
+  "off_the_clock",
+  "rabbit_hole_detected",
+  "ready_to_resume",
+  "all_contained",
+  "needs_your_yes",
+]);
 const NON_INTERVENTION_KEYS = new Set(["good_to_run", "ready_to_resume", "all_contained"]);
 
 export const AGENT_CONTROL_OVERVIEW_QUERY = `
@@ -88,7 +98,7 @@ export const AGENT_CONTROL_OVERVIEW_QUERY = `
 `;
 
 export function renderHeadsDownCall(call: HeadsDownCallView): RenderedHeadsDownCall {
-  const knownKey = normalizeEnumValue(call.knownKey);
+  const knownKey = normalizeEnumValue(call.knownKey) ?? canonicalKnownKey(call.key);
   const safeFallback = knownKey === null;
   const title = cleanText(call.title) ?? fallbackTitle(call);
   const body = cleanText(call.body) ?? fallbackBody(call);
@@ -200,12 +210,19 @@ function escalationText(call: HeadsDownCallView, allowedActionKeys: string[]): s
 }
 
 function fallbackTitle(call: HeadsDownCallView): string {
-  if (normalizeEnumValue(call.knownKey) === null) return "Needs your yes";
+  const knownKey = normalizeEnumValue(call.knownKey) ?? canonicalKnownKey(call.key);
+  if (knownKey === "rabbit_hole_detected") return "Rabbit hole detected";
+  if (knownKey === null) return "Needs your yes";
   return humanizeToken(call.key) || "HeadsDown call";
 }
 
 function fallbackBody(call: HeadsDownCallView): string {
-  if (normalizeEnumValue(call.knownKey) === null) {
+  const knownKey = normalizeEnumValue(call.knownKey) ?? canonicalKnownKey(call.key);
+  if (knownKey === "rabbit_hole_detected") {
+    return "Pause before this becomes cleanup work.";
+  }
+
+  if (knownKey === null) {
     return "HeadsDown returned a call this Claude integration does not recognize. Ask before going deeper.";
   }
 
@@ -233,6 +250,11 @@ function canonicalAllowedActionKeys(call: HeadsDownCallView): string[] {
 
 function normalizeActionKey(value: string | null | undefined): string | null {
   return normalizeEnumValue(value);
+}
+
+function canonicalKnownKey(value: string | null | undefined): string | null {
+  const key = normalizeEnumValue(value);
+  return key && CANONICAL_CALL_KEYS.has(key) ? key : null;
 }
 
 function normalizeEnumValue(value: string | null | undefined): string | null {

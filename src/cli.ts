@@ -16,6 +16,7 @@ import { getAgentControlOverviewCompat, renderHeadsDownCall } from "./agent-cont
 import { reportRunOutcome, reportRunProgress } from "./agent-run-events.js";
 import { getActiveRunStateForSession } from "./agent-run-state.js";
 import { LocalActionMarkerStore } from "./headsdown-action-executor.js";
+import { buildReportProgressResponse } from "./report-progress-response.js";
 import type {
   ActorContext,
   Contract,
@@ -401,11 +402,22 @@ async function reportProgress() {
   const filesModifiedCount = parseNonNegativeInteger(process.argv[4]);
 
   try {
+    const activeRun = await getActiveRunStateForSession();
     const client = await HeadsDownClient.fromCredentials();
     const actorClient = withActorContext(client, "cli-report-progress");
     await reportRunProgress(actorClient, { toolType, filesModifiedCount });
+
+    const overview = await getAgentControlOverviewCompat(actorClient);
+    console.log(
+      JSON.stringify(
+        buildReportProgressResponse({
+          activeRun,
+          overview,
+        }),
+      ),
+    );
   } catch {
-    // Hook telemetry must never disrupt tool execution
+    console.log(JSON.stringify({ reported: false, reason: "unavailable" }));
   }
 }
 

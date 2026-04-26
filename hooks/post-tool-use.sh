@@ -60,7 +60,7 @@ if [ -n "$proposal_json" ] && [ "$proposal_json" != "null" ]; then
 fi
 
 # Report privacy-safe progress metadata. Never block the hook on telemetry failures.
-node "$CLI" report-progress "$TOOL_TYPE" "$count" >/dev/null 2>&1 || true
+progress_json=$(node "$CLI" report-progress "$TOOL_TYPE" "$count" 2>/dev/null) || progress_json=""
 
 # Build message
 message="[HeadsDown] ${count} file(s) modified this session."
@@ -73,6 +73,25 @@ if [ "$estimated_files" -gt 0 ]; then
   fi
 fi
 
-if [ "$TOOL_TYPE" = "write" ]; then
+rabbit_hole_detected="false"
+if [ -n "$progress_json" ] && [ "$progress_json" != "null" ]; then
+  rabbit_hole_detected=$(echo "$progress_json" | jq -r '.rabbitHoleDetected // false' 2>/dev/null || echo "false")
+  if [ "$rabbit_hole_detected" = "true" ]; then
+    run_id=$(echo "$progress_json" | jq -r '.runId // empty' 2>/dev/null || echo "")
+
+    if [ -n "$run_id" ]; then
+      message="$message Rabbit hole detected. Pause before this becomes cleanup work. Claude Code controls the model. HeadsDown controls the run. Stop broad exploration. While the call is still rabbit_hole_detected, call headsdown_apply_action with run_id ${run_id}, action_key pause_and_summarize, and a privacy-safe handoff_summary so the pause and handoff are saved together."
+
+      allow_duration_supported=$(echo "$progress_json" | jq -r '(.allowedActionKeys // []) | index("allow_for_duration") != null' 2>/dev/null || echo "false")
+      if [ "$allow_duration_supported" = "true" ]; then
+        message="$message If continuing now is necessary, you may call headsdown_apply_action with run_id ${run_id}, action_key allow_for_duration, and duration_minutes instead of pausing. Do not call allow_for_duration after pause_and_summarize transitions the run to ready_to_resume."
+      fi
+    else
+      message="$message Rabbit hole detected. Pause before this becomes cleanup work. Claude Code controls the model. HeadsDown controls the run. Stop broad exploration and check headsdown_status to re-establish the target run before applying an action."
+    fi
+  fi
+fi
+
+if [ "$TOOL_TYPE" = "write" ] || [ "$rabbit_hole_detected" = "true" ]; then
   echo "{\"systemMessage\": \"$message\"}"
 fi

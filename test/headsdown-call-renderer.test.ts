@@ -35,6 +35,9 @@ describe("renderHeadsDownCall", () => {
       expect(rendered?.title).toBe(expected[key].title);
       expect(rendered?.primaryCta).toBe(expected[key].primaryCta);
       expect(rendered?.summary).toContain(expected[key].title);
+      if (key === "rabbit_hole_detected") {
+        expect(rendered?.body).toBe("Pause before this becomes cleanup work.");
+      }
       if (expected[key].primaryCta) {
         expect(rendered?.summary).toContain(`Next move: ${expected[key].primaryCta}.`);
       } else {

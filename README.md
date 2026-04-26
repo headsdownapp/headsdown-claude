@@ -59,7 +59,7 @@ HeadsDown value in Claude is run governance:
 - scope control
 - off-clock queueing
 - approval gates
-- rabbit-hole detection and intervention calls from HeadsDown as that Claude flow lands
+- rabbit-hole detection and intervention calls from HeadsDown
 - pause and handoff
 - ready-to-resume continuity
 - privacy-safe outcome reporting
@@ -92,15 +92,17 @@ Recommended action: queue_for_morning
 
 ### Rabbit hole detected
 
-Claude can render the canonical call when HeadsDown provides it. The full Claude-specific rabbit-hole reporting and pause flow is tracked separately in headsdownapp/heads_down#934.
+Claude reports privacy-safe progress metadata, renders the backend-provided call, and treats the intervention as a hard pause moment.
 
 ```text
 HEADSDOWN CALL
 Rabbit hole detected
-The run is expanding past the approved slice. Pause and summarize before this becomes cleanup work.
+Rabbit hole detected. Pause before this becomes cleanup work.
 
 Recommended action: pause_and_summarize
 ```
+
+When this appears, stop broad exploration and choose one valid backend action while the call is still `rabbit_hole_detected`: call `headsdown_apply_action` with `action_key: "pause_and_summarize"` and a privacy-safe `handoff_summary` so the pause and handoff are saved together, or use an allowed bounded `allow_for_duration` override instead of pausing.
 
 ## What's in the Plugin
 
