@@ -16,6 +16,8 @@ import {
   ConfigStore,
 } from "@headsdown/sdk";
 import { getAgentControlOverviewCompat, renderHeadsDownCall } from "./agent-control.js";
+import { reportRunOutcome, reportRunResumed, reportRunStarted } from "./agent-run-events.js";
+import { getActiveRunStateForSession } from "./agent-run-state.js";
 import {
   applyCanonicalAction,
   APPLY_HEADSDOWN_ACTION_MUTATION,
@@ -642,6 +644,12 @@ async function handlePropose(args: Record<string, unknown>) {
       // Don't fail the proposal if calibration setup fails
       console.error("Calibration setup failed:", error);
     }
+
+    await reportRunStarted(actorClient, {
+      proposalId: verdict.proposalId,
+      estimatedFiles: input.estimatedFiles,
+      estimatedMinutes: input.estimatedMinutes,
+    });
   }
 
   const guidance =
@@ -811,10 +819,25 @@ async function handleReport(args: Record<string, unknown>) {
     if (typeof args.error_category === "string") extras.errorCategory = args.error_category;
     if (typeof args.tests_passed === "boolean") extras.testsPassed = args.tests_passed;
 
-    await tracker.complete(
-      outcome as "completed" | "failed" | "partially_completed" | "cancelled" | "timed_out",
-      extras,
-    );
+    const terminalOutcome = outcome as
+      | "completed"
+      | "failed"
+      | "partially_completed"
+      | "cancelled"
+      | "timed_out";
+    await tracker.complete(terminalOutcome, extras);
+
+    const activeRun = await getActiveRunStateForSession();
+    const reportingClient = await getClient();
+    if (activeRun && reportingClient) {
+      const actorClient = withActorContext(reportingClient, "headsdown_report");
+      await reportRunOutcome(actorClient, {
+        proposalId: activeRun.proposalId,
+        outcome: terminalOutcome,
+        errorCategory: typeof args.error_category === "string" ? args.error_category : undefined,
+        testsPassed: typeof args.tests_passed === "boolean" ? args.tests_passed : undefined,
+      });
+    }
 
     return textResult(
       JSON.stringify(
@@ -969,7 +992,7 @@ function withActorContext(client: HeadsDownClient, toolName: string): HeadsDownC
     source: "claude-code",
     agentId: "claude-code",
     sessionId: process.env.CLAUDE_SESSION_ID,
-    workspaceRef: process.cwd(),
+    workspaceRef: "unknown",
   };
 
   if (toolName) {
@@ -1292,6 +1315,7 @@ async function handleApplyAction(args: Record<string, unknown>) {
       message:
         "Ready to resume. HeadsDown saved the thread so Claude can pick up without starting over.",
     };
+    await reportRunResumed(actorClient, { runId: String(args.run_id) });
   }
 
   return textResult(JSON.stringify(payload, null, 2));

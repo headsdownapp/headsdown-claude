@@ -16,20 +16,37 @@ if [ ! -f "$CLI" ]; then
   exit 0
 fi
 
+HOOK_INPUT=$(cat 2>/dev/null || true)
+TOOL_NAME=$(echo "$HOOK_INPUT" | jq -r '.tool_name // .toolName // empty' 2>/dev/null || true)
+TOOL_TYPE="external"
+case "$TOOL_NAME" in
+  Read|Grep|Glob|LS)
+    TOOL_TYPE="read"
+    ;;
+  Write|Edit|MultiEdit)
+    TOOL_TYPE="write"
+    ;;
+esac
+
 # Per-session counter file
 SESSION_ID="${CLAUDE_SESSION_ID:-default}"
 COUNTER_FILE="/tmp/headsdown-file-count-${SESSION_ID}"
 
-# Increment count
+# Increment count for write-like tools only. This stays local and is used only for the scope warning.
 current=0
+count=0
 if [ -f "$COUNTER_FILE" ]; then
   current=$(cat "$COUNTER_FILE" 2>/dev/null || echo "0")
   if ! [[ "$current" =~ ^[0-9]+$ ]]; then
     current=0
   fi
 fi
-count=$((current + 1))
-echo "$count" > "$COUNTER_FILE"
+if [ "$TOOL_TYPE" = "write" ]; then
+  count=$((current + 1))
+  echo "$count" > "$COUNTER_FILE"
+else
+  count="$current"
+fi
 
 # Check proposal for scope comparison
 estimated_files=0
@@ -42,6 +59,9 @@ if [ -n "$proposal_json" ] && [ "$proposal_json" != "null" ]; then
   fi
 fi
 
+# Report privacy-safe progress metadata. Never block the hook on telemetry failures.
+node "$CLI" report-progress "$TOOL_TYPE" "$count" >/dev/null 2>&1 || true
+
 # Build message
 message="[HeadsDown] ${count} file(s) modified this session."
 
@@ -53,4 +73,6 @@ if [ "$estimated_files" -gt 0 ]; then
   fi
 fi
 
-echo "{\"systemMessage\": \"$message\"}"
+if [ "$TOOL_TYPE" = "write" ]; then
+  echo "{\"systemMessage\": \"$message\"}"
+fi

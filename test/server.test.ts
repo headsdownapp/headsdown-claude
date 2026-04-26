@@ -966,7 +966,7 @@ describe("Plugin structure", () => {
       expect(preToolUse.hooks[0].timeout).toBeLessThanOrEqual(10);
     });
 
-    it("PostToolUse hook targets Write, Edit, and MultiEdit", async () => {
+    it("PostToolUse hook observes all tools for progress reporting", async () => {
       const hooksPath = join(import.meta.dirname, "..", "hooks", "hooks.json");
       const raw = await readFile(hooksPath, "utf-8");
       const config = JSON.parse(raw);
@@ -975,9 +975,7 @@ describe("Plugin structure", () => {
       expect(config.hooks.PostToolUse).toHaveLength(1);
 
       const postToolUse = config.hooks.PostToolUse[0];
-      expect(postToolUse.matcher).toContain("Write");
-      expect(postToolUse.matcher).toContain("Edit");
-      expect(postToolUse.matcher).toContain("MultiEdit");
+      expect(postToolUse.matcher).toBe("*");
       expect(postToolUse.hooks[0].command).toContain("${CLAUDE_PLUGIN_ROOT}");
       expect(postToolUse.hooks[0].timeout).toBeLessThanOrEqual(10);
     });
@@ -1154,6 +1152,11 @@ describe("Plugin structure", () => {
       const content = await readFile(scriptPath, "utf-8");
       expect(content).toContain('"$CLI" report');
     });
+
+    it("fails open when report command errors", async () => {
+      const content = await readFile(scriptPath, "utf-8");
+      expect(content).toContain("|| exit 0");
+    });
   });
 
   describe("hooks/check-availability.sh", () => {
@@ -1255,6 +1258,15 @@ describe("Plugin structure", () => {
       expect(content).toContain("availability");
       expect(content).toContain("renderedHeadsDownCall");
       expect(content).toContain("renderHeadsDownCall");
+    });
+
+    it("uses privacy-safe unknown workspaceRef in actor context", async () => {
+      const serverPath = join(import.meta.dirname, "..", "src", "server.ts");
+      const cliPath = join(import.meta.dirname, "..", "src", "cli.ts");
+      const serverContent = await readFile(serverPath, "utf-8");
+      const cliContent = await readFile(cliPath, "utf-8");
+      expect(serverContent).toContain('workspaceRef: "unknown"');
+      expect(cliContent).toContain('workspaceRef: "unknown"');
     });
 
     it("propose handler forwards delivery_mode to SDK", async () => {
@@ -1400,6 +1412,12 @@ describe("Plugin structure", () => {
       const content = await readFile(scriptPath, "utf-8");
       // Guard ensures we only compare when estimated_files > 0
       expect(content).toContain('[ "$estimated_files" -gt 0 ]');
+    });
+
+    it("reports progress in fail-open mode", async () => {
+      const content = await readFile(scriptPath, "utf-8");
+      expect(content).toContain('"$CLI" report-progress "$TOOL_TYPE" "$count"');
+      expect(content).toContain("|| true");
     });
 
     it("uses [HeadsDown] prefix in system messages", async () => {

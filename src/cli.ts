@@ -13,6 +13,8 @@ import { mkdirSync } from "node:fs";
 import * as HeadsDownSDK from "@headsdown/sdk";
 import { HeadsDownClient, ConfigStore, ProposalStateStore, AuthError } from "@headsdown/sdk";
 import { getAgentControlOverviewCompat, renderHeadsDownCall } from "./agent-control.js";
+import { reportRunOutcome, reportRunProgress } from "./agent-run-events.js";
+import { getActiveRunStateForSession } from "./agent-run-state.js";
 import { LocalActionMarkerStore } from "./headsdown-action-executor.js";
 import type {
   ActorContext,
@@ -42,6 +44,8 @@ async function main() {
       return await continuation();
     case "report":
       return await report();
+    case "report-progress":
+      return await reportProgress();
     case "action-marker":
       return await actionMarker();
     default:
@@ -292,7 +296,7 @@ function withActorContext(client: HeadsDownClient, commandName: string): HeadsDo
     source: "claude-code",
     agentId: `claude-code:${commandName}`,
     sessionId: process.env.CLAUDE_SESSION_ID,
-    workspaceRef: process.cwd(),
+    workspaceRef: "unknown",
   };
 
   return client.withActor(actorContext);
@@ -382,9 +386,32 @@ async function report() {
     const actorClient = withActorContext(client, "cli-report");
     const input: OutcomeInput = { proposalId: proposal.id, outcome };
     await actorClient.reportOutcome(input);
+
+    const activeRun = await getActiveRunStateForSession();
+    if (activeRun) {
+      await reportRunOutcome(actorClient, { proposalId: activeRun.proposalId, outcome });
+    }
   } catch {
     // Don't disrupt session end for any reason
   }
+}
+
+async function reportProgress() {
+  const toolType = process.argv[3] as "read" | "write" | "external" | undefined;
+  const filesModifiedCount = parseNonNegativeInteger(process.argv[4]);
+
+  try {
+    const client = await HeadsDownClient.fromCredentials();
+    const actorClient = withActorContext(client, "cli-report-progress");
+    await reportRunProgress(actorClient, { toolType, filesModifiedCount });
+  } catch {
+    // Hook telemetry must never disrupt tool execution
+  }
+}
+
+function parseNonNegativeInteger(value: string | undefined): number | undefined {
+  if (!value || !/^\d+$/.test(value)) return undefined;
+  return Number(value);
 }
 
 main().catch((error) => {
