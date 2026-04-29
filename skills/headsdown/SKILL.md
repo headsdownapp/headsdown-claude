@@ -118,23 +118,6 @@ If you realize mid-task that you will touch significantly more files or modules 
 
 Watch for signals that scope has grown: you're editing files in a third module, you've discovered a dependency that requires changes in multiple layers, or the PostToolUse context message notes that your file count has exceeded the estimate. When you see these, pause and re-propose before continuing.
 
-## Rabbit Hole Intervention Flow
-
-When HeadsDown reports this exact call, treat it as a hard intervention moment:
-
-> Rabbit hole detected. Pause before this becomes cleanup work.
-
-Claude Code controls the model. HeadsDown controls the run.
-
-Immediate behavior:
-
-1. Stop broad exploration and retries.
-2. Choose one valid backend action while the call is still `rabbit_hole_detected`.
-3. To pause, call `headsdown_apply_action` once with the target `run_id`, `action_key: "pause_and_summarize"`, and a privacy-safe `handoff_summary` so the run pause and saved handoff move together.
-4. If continuing now is explicitly needed and `allow_for_duration` is allowed, call `headsdown_apply_action` with the target `run_id`, `action_key: "allow_for_duration"`, and `duration_minutes` instead of pausing.
-
-Do not continue open-ended exploration once rabbit-hole intervention is active. Do not call `allow_for_duration` after `pause_and_summarize`; after pause, the run transitions to ready-to-resume semantics.
-
 ## Interrupt Evaluation
 
 Before asking the user a **non-critical** clarifying question mid-task, call `headsdown_interrupt`.

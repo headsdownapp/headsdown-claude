@@ -5,9 +5,7 @@ export const CANONICAL_HEADSDOWN_CALL_KEYS = [
   "keep_it_tight",
   "not_worth_starting_now",
   "off_the_clock",
-  "rabbit_hole_detected",
   "ready_to_resume",
-  "all_contained",
   "needs_your_yes",
 ] as const;
 
@@ -29,6 +27,8 @@ type HeadsDownCallTemplate = {
   primaryCta: string | null;
 };
 
+const DEPRECATED_HEADSDOWN_CALL_KEYS = new Set(["rabbit_hole_detected", "all_contained"]);
+
 const CALL_TEMPLATES: Record<CanonicalHeadsDownCallKey, HeadsDownCallTemplate> = {
   good_to_run: {
     title: "Good to run",
@@ -47,23 +47,13 @@ const CALL_TEMPLATES: Record<CanonicalHeadsDownCallKey, HeadsDownCallTemplate> =
   },
   off_the_clock: {
     title: "Off the clock",
-    body: "Non-urgent agent decisions wait until the next work window. Safe continuation can stay contained, but new asks should queue.",
+    body: "Non-urgent agent decisions wait until the next work window. New asks should queue.",
     primaryCta: "Queue for later",
-  },
-  rabbit_hole_detected: {
-    title: "Rabbit hole detected",
-    body: "Pause before this becomes cleanup work.",
-    primaryCta: "Pause + summarize",
   },
   ready_to_resume: {
     title: "Ready to resume",
     body: "HeadsDown saved the thread so the agent can pick up without starting over. Resume the approved work or keep it queued.",
     primaryCta: "Resume approved work",
-  },
-  all_contained: {
-    title: "All contained",
-    body: "Runs are staying inside your time, scope, and interruption limits. Nothing needs you right now.",
-    primaryCta: null,
   },
   needs_your_yes: {
     title: "Needs your yes",
@@ -87,13 +77,16 @@ export function renderHeadsDownCall(
   }
 
   const knownKey = isCanonicalCallKey(normalizedKey) ? normalizedKey : null;
+  const deprecated = DEPRECATED_HEADSDOWN_CALL_KEYS.has(normalizedKey);
   const template = knownKey ? CALL_TEMPLATES[knownKey] : UNKNOWN_TEMPLATE;
 
-  const title = firstPresent(payload?.title, template.title);
-  const body = firstPresent(payload?.body, template.body);
-  const primaryCta = knownKey
-    ? firstPresent(payload?.primaryActionLabel, template.primaryCta)
-    : template.primaryCta;
+  const title = deprecated ? UNKNOWN_TEMPLATE.title : firstPresent(payload?.title, template.title);
+  const body = deprecated ? UNKNOWN_TEMPLATE.body : firstPresent(payload?.body, template.body);
+  const primaryCta = deprecated
+    ? UNKNOWN_TEMPLATE.primaryCta
+    : knownKey
+      ? firstPresent(payload?.primaryActionLabel, template.primaryCta)
+      : template.primaryCta;
 
   return {
     key: normalizedKey,
