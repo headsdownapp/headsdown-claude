@@ -371,6 +371,12 @@ npm test
 claude plugins validate .
 ```
 
+## Build and packaging notes
+
+`npm run build` bundles `src/index.ts` and `src/cli.ts` with esbuild into `dist/index.js` and `dist/cli.js`.
+
+The bundle inlines `@headsdown/sdk` so consumers do not install it transitively when they install `headsdown-claude`. `@modelcontextprotocol/sdk` stays external as a runtime dependency.
+
 ## Dependency update automation
 
 This repo uses Renovate to keep `@headsdown/sdk` and other routine dependencies current. New SDK releases open bot PRs automatically, and eligible updates can automerge after required CI checks pass. In normal maintenance flow, do not manually edit `@headsdown/sdk` versions unless you are intentionally overriding Renovate behavior.
