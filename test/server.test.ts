@@ -430,16 +430,16 @@ describe("HeadsDown MCP Server", () => {
       ).toBe(false);
     });
 
-    it("pauses and summarizes rabbit-hole runs with a saved handoff", async () => {
+    it("pauses and saves a handoff for resumable runs", async () => {
       const request = vi
         .fn()
         .mockResolvedValueOnce({
           agentControlOverview: {
-            headsdownCall: { key: "rabbit_hole_detected" },
+            headsdownCall: { key: "keep_it_tight" },
             runSummaries: [
               {
-                runId: "run-rabbit",
-                callKey: "rabbit_hole_detected",
+                runId: "run-pause",
+                callKey: "keep_it_tight",
                 allowedActionKeys: ["pause_and_summarize", "allow_for_duration"],
               },
             ],
@@ -448,7 +448,7 @@ describe("HeadsDown MCP Server", () => {
         .mockResolvedValueOnce({
           applyHeadsdownAction: {
             ok: true,
-            result: { eventId: "evt-rabbit", actionKey: "pause_and_summarize" },
+            result: { eventId: "evt-pause", actionKey: "pause_and_summarize" },
           },
         });
 
@@ -462,7 +462,7 @@ describe("HeadsDown MCP Server", () => {
       const result = await client.callTool({
         name: "headsdown_apply_action",
         arguments: {
-          run_id: "run-rabbit",
+          run_id: "run-pause",
           action_key: "pause_and_summarize",
           handoff_summary: "Resume by re-scoping to the validation seam.",
         },
@@ -471,16 +471,16 @@ describe("HeadsDown MCP Server", () => {
       const text = (result.content as Array<{ type: string; text: string }>)[0].text;
       const payload = JSON.parse(text);
       expect(payload.ok).toBe(true);
-      expect(payload.rabbitHole).toEqual({
-        pausedAndSummarized: true,
+      expect(payload.handoff).toEqual({
+        paused: true,
         handoffSaved: true,
         handoffSummary: "Resume by re-scoping to the validation seam.",
-        message: "Rabbit hole detected. Pause before this becomes cleanup work.",
+        message: "Run paused. Handoff saved for resume.",
       });
       expect(payload.mutationInput).toMatchObject({
-        runId: "run-rabbit",
+        runId: "run-pause",
         actionKey: "pause_and_summarize",
-        sourceState: "rabbit_hole_detected",
+        sourceState: "keep_it_tight",
         handoffAvailable: true,
         handoffState: "SAVED",
         handoffSource: "claude",
@@ -491,7 +491,7 @@ describe("HeadsDown MCP Server", () => {
       const continuation = JSON.parse(await readFile(continuationPath, "utf-8"));
       expect(continuation.resumeInstruction).toBe("Resume by re-scoping to the validation seam.");
       expect(continuation.openDecisions).toEqual(["Re-scope before continuing."]);
-      expect(continuation.runId).toBe("run-rabbit");
+      expect(continuation.runId).toBe("run-pause");
     });
 
     it("requires a handoff summary before queue_for_morning or pause_and_summarize reports a saved handoff", async () => {
@@ -524,7 +524,7 @@ describe("HeadsDown MCP Server", () => {
     it("removes the saved local handoff if the backend rejects a handoff action", async () => {
       for (const [actionKey, callKey] of [
         ["queue_for_morning", "off_the_clock"],
-        ["pause_and_summarize", "rabbit_hole_detected"],
+        ["pause_and_summarize", "keep_it_tight"],
       ] as const) {
         const request = vi
           .fn()
@@ -815,14 +815,14 @@ describe("Plugin structure", () => {
       expect(content).toContain("headsdown_auth");
     });
 
-    it("documents rabbit-hole run governance framing", async () => {
+    it("documents run-governance action usage", async () => {
       const skillPath = join(import.meta.dirname, "..", "skills", "headsdown", "SKILL.md");
       const content = await readFile(skillPath, "utf-8");
 
-      expect(content).toContain("Rabbit hole detected. Pause before this becomes cleanup work.");
-      expect(content).toContain("Claude Code controls the model. HeadsDown controls the run.");
-      expect(content).toContain("pause_and_summarize");
-      expect(content).toContain("allow_for_duration");
+      expect(content).toContain("headsdown_apply_action");
+      expect(content).toContain("handoff");
+      expect(content).toContain("run-governance");
+      expect(content).not.toContain("pause before this becomes cleanup work");
     });
 
     it("documents all availability modes", async () => {
@@ -1505,22 +1505,14 @@ describe("Plugin structure", () => {
       expect(content).toContain('|| progress_json=""');
     });
 
-    it("surfaces rabbit-hole intervention copy with run-governance framing", async () => {
+    it("does not include deprecated intervention copy", async () => {
       const content = await readFile(scriptPath, "utf-8");
 
-      expect(content).toContain("rabbitHoleDetected");
-      expect(content).toContain("Rabbit hole detected. Pause before this becomes cleanup work.");
-      expect(content).toContain("Claude Code controls the model. HeadsDown controls the run.");
-      expect(content).toContain("headsdown_apply_action");
-      expect(content).toContain("run_id");
-      expect(content).toContain("pause_and_summarize");
-      expect(content).toContain("handoff_summary");
-      expect(content).toContain("allow_for_duration");
-      expect(content).toContain("Do not call allow_for_duration after pause_and_summarize");
-      expect(content).toContain("check headsdown_status to re-establish the target run");
+      expect(content).not.toContain("pause before this becomes cleanup work");
+      expect(content).not.toContain("check headsdown_status to re-establish the target run");
     });
 
-    it("builds rabbit-hole state from active run summaries", async () => {
+    it("keeps progress response wiring for fail-open reporting", async () => {
       const cliPath = join(import.meta.dirname, "..", "src", "cli.ts");
       const content = await readFile(cliPath, "utf-8");
 

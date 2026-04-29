@@ -9,7 +9,6 @@ export interface ReportProgressResponse {
   reported: boolean;
   runId: string | null;
   proposalRef: string | null;
-  rabbitHoleDetected: boolean;
   allowedActionKeys: string[];
 }
 
@@ -18,14 +17,12 @@ export function buildReportProgressResponse(input: {
   overview: AgentControlOverviewView | null;
 }): ReportProgressResponse {
   const currentRun = resolveCurrentRun(input.activeRun, input.overview?.runSummaries ?? null);
-  const rabbitHoleDetected = normalizeEnumValue(currentRun?.callKey) === "rabbit_hole_detected";
   const allowedActionKeys = normalizeActionKeys(currentRun?.allowedActionKeys ?? []);
 
   return {
     reported: true,
     runId: currentRun?.runId ?? input.activeRun?.runId ?? null,
     proposalRef: input.activeRun?.proposalId ?? null,
-    rabbitHoleDetected,
     allowedActionKeys,
   };
 }
@@ -44,10 +41,7 @@ function resolveCurrentRun(
     );
   }
 
-  const rabbitHoleRuns = runSummaries.filter(
-    (run) => normalizeEnumValue(run.callKey) === "rabbit_hole_detected",
-  );
-  return rabbitHoleRuns.length === 1 ? rabbitHoleRuns[0] : null;
+  return runSummaries[0] ?? null;
 }
 
 function normalizeActionKeys(values: string[] | null | undefined): string[] {

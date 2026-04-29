@@ -215,7 +215,7 @@ describe("applyCanonicalAction", () => {
     await withStore(async (store) => {
       const result = await applyCanonicalAction(
         { runId: "run-empty-actions", actionKey: "continue" },
-        deps(store, { runActionContext: { sourceState: "all_contained", allowedActionKeys: [] } }),
+        deps(store, { runActionContext: { sourceState: "keep_it_tight", allowedActionKeys: [] } }),
       );
 
       expect(result.ok).toBe(false);
