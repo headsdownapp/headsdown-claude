@@ -18,13 +18,8 @@ describe("renderHeadsDownCall", () => {
         primaryCta: "Queue for later",
       },
       off_the_clock: { title: "Off the clock", primaryCta: "Queue for later" },
-      rabbit_hole_detected: {
-        title: "Rabbit hole detected",
-        primaryCta: "Pause + summarize",
-      },
       attention_window_closing: { title: "Window closing", primaryCta: "Extend" },
       ready_to_resume: { title: "Ready to resume", primaryCta: "Resume approved work" },
-      all_contained: { title: "All contained", primaryCta: null },
       needs_your_yes: { title: "Needs your yes", primaryCta: "Review request" },
     };
 
@@ -36,9 +31,6 @@ describe("renderHeadsDownCall", () => {
       expect(rendered?.title).toBe(expected[key].title);
       expect(rendered?.primaryCta).toBe(expected[key].primaryCta);
       expect(rendered?.summary).toContain(expected[key].title);
-      if (key === "rabbit_hole_detected") {
-        expect(rendered?.body).toBe("Pause before this becomes cleanup work.");
-      }
       if (key === "attention_window_closing") {
         expect(rendered?.body).toBe(
           "Your attention window is closing. Choose whether to extend or wrap with a summary while context is fresh.",
@@ -81,6 +73,33 @@ describe("renderHeadsDownCall", () => {
     expect(rendered?.body).toBe("HeadsDown needs a human decision before this agent continues.");
     expect(rendered?.primaryCta).toBe("Review request");
     expect(rendered?.summary).toContain("Needs your yes");
+  });
+
+  it("treats deprecated call keys as safe fallback", () => {
+    const rabbit = renderHeadsDownCall({
+      key: "rabbit_hole_detected",
+      title: "Rabbit hole detected",
+      body: "Pause before this becomes cleanup work.",
+      primaryActionLabel: "Pause + summarize",
+    });
+    const contained = renderHeadsDownCall({
+      key: "all_contained",
+      title: "All contained",
+      body: "Nothing needs you right now.",
+      primaryActionLabel: "Continue",
+    });
+
+    expect(rabbit?.knownKey).toBeNull();
+    expect(rabbit?.fallback).toBe(true);
+    expect(rabbit?.title).toBe("Needs your yes");
+    expect(rabbit?.body).toBe("HeadsDown needs a human decision before this agent continues.");
+    expect(rabbit?.primaryCta).toBe("Review request");
+
+    expect(contained?.knownKey).toBeNull();
+    expect(contained?.fallback).toBe(true);
+    expect(contained?.title).toBe("Needs your yes");
+    expect(contained?.body).toBe("HeadsDown needs a human decision before this agent continues.");
+    expect(contained?.primaryCta).toBe("Review request");
   });
 
   it("does not use action-like server CTA copy for unknown keys", () => {

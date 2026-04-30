@@ -1313,11 +1313,11 @@ async function handleApplyAction(args: Record<string, unknown>) {
   }
 
   if (pauseAndSummarize) {
-    payload.rabbitHole = {
-      pausedAndSummarized: true,
+    payload.handoff = {
+      paused: true,
       handoffSaved: true,
       handoffSummary,
-      message: "Rabbit hole detected. Pause before this becomes cleanup work.",
+      message: "Run paused. Handoff saved for resume.",
     };
   }
 

@@ -53,13 +53,12 @@ const CANONICAL_CALL_KEYS = new Set([
   "keep_it_tight",
   "not_worth_starting_now",
   "off_the_clock",
-  "rabbit_hole_detected",
   "attention_window_closing",
   "ready_to_resume",
-  "all_contained",
   "needs_your_yes",
 ]);
-const NON_INTERVENTION_KEYS = new Set(["good_to_run", "ready_to_resume", "all_contained"]);
+const NON_INTERVENTION_KEYS = new Set(["good_to_run", "ready_to_resume"]);
+const DEPRECATED_CALL_KEYS = new Set(["rabbit_hole_detected", "all_contained"]);
 
 export const AGENT_CONTROL_OVERVIEW_QUERY = `
   query AgentControlOverviewForClaudeRendering {
@@ -99,22 +98,24 @@ export const AGENT_CONTROL_OVERVIEW_QUERY = `
 `;
 
 export function renderHeadsDownCall(call: HeadsDownCallView): RenderedHeadsDownCall {
-  const knownKey = normalizeEnumValue(call.knownKey) ?? canonicalKnownKey(call.key);
+  const knownKey = canonicalKnownKey(call.knownKey) ?? canonicalKnownKey(call.key);
+  const deprecated =
+    isDeprecatedCallKey(call.knownKey) ||
+    isDeprecatedCallKey(call.key) ||
+    isDeprecatedCallKey(knownKey);
   const safeFallback = knownKey === null;
-  const title = cleanText(call.title) ?? fallbackTitle(call);
-  const body = cleanText(call.body) ?? fallbackBody(call);
+  const title = deprecated ? fallbackTitle({}) : (cleanText(call.title) ?? fallbackTitle(call));
+  const body = deprecated ? fallbackBody({}) : (cleanText(call.body) ?? fallbackBody(call));
   const intervention = isInterventionCall(call);
   const allowedActionKeys = canonicalAllowedActionKeys(call);
   const allowedActionsLine = renderAllowedActionsLine(allowedActionKeys);
 
-  const text = intervention
-    ? renderInterventionCall(call, title, body, allowedActionKeys, allowedActionsLine)
-    : [
-        `HeadsDown call: ${title}.`,
-        body,
-        allowedActionsLine,
-        "Claude Code controls the model. HeadsDown controls the run.",
-      ].join("\n");
+  const text = [
+    `HeadsDown call: ${title}.`,
+    body,
+    allowedActionsLine,
+    "Claude Code controls the model. HeadsDown controls the run.",
+  ].join("\n");
 
   return {
     key: call.key,
@@ -141,25 +142,6 @@ export async function getAgentControlOverviewCompat(
   }
 }
 
-function renderInterventionCall(
-  call: HeadsDownCallView,
-  title: string,
-  body: string,
-  allowedActionKeys: string[],
-  allowedActionsLine: string,
-): string {
-  return [
-    `HeadsDown call: ${title}.`,
-    body,
-    `Call: ${title}.`,
-    `Trap: ${trapText(call)}`,
-    `Play: ${playText(call, allowedActionKeys)}`,
-    `Escalation: ${escalationText(call, allowedActionKeys)}`,
-    allowedActionsLine,
-    "Claude Code controls the model. HeadsDown controls the run.",
-  ].join("\n");
-}
-
 function isInterventionCall(call: HeadsDownCallView): boolean {
   const knownKey = normalizeEnumValue(call.knownKey);
   if (knownKey && NON_INTERVENTION_KEYS.has(knownKey)) return false;
@@ -172,64 +154,23 @@ function isInterventionCall(call: HeadsDownCallView): boolean {
   return key !== null && !NON_INTERVENTION_KEYS.has(key);
 }
 
-function trapText(call: HeadsDownCallView): string {
-  const reasons = call.reasonCodes?.map(humanizeToken).filter(Boolean) ?? [];
-  if (reasons.length > 0) {
-    return `HeadsDown saw ${reasons.join(", ")}.`;
-  }
-
-  return "The run may cross a boundary that needs a human decision.";
-}
-
-function playText(call: HeadsDownCallView, allowedActionKeys: string[]): string {
-  const recommendedAction = normalizeActionKey(
-    call.recommendedActionKey ?? call.recommendedActionKnownKey,
-  );
-  if (recommendedAction && allowedActionKeys.includes(recommendedAction)) {
-    return `Use canonical action ${recommendedAction}.`;
-  }
-
-  const primaryAction = normalizeActionKey(call.primaryActionKey ?? call.primaryActionKnownKey);
-  if (primaryAction && allowedActionKeys.includes(primaryAction)) {
-    return `Use canonical action ${primaryAction}.`;
-  }
-
-  if (allowedActionKeys.length > 0) {
-    return "Choose one of the allowed backend actions. Do not invent a local action.";
-  }
-
-  return "No backend action is available for this call. Ask before going deeper.";
-}
-
-function escalationText(call: HeadsDownCallView, allowedActionKeys: string[]): string {
-  const urgency = normalizeEnumValue(call.urgency);
-  if ((urgency === "high" || urgency === "critical") && allowedActionKeys.length > 0) {
-    return "Do not continue until the user gives a clear yes or one allowed action is applied.";
-  }
-
-  return "Ask before going deeper if the run crosses time, scope, spend, or interruption boundaries.";
-}
-
-function fallbackTitle(call: HeadsDownCallView): string {
-  const knownKey = normalizeEnumValue(call.knownKey) ?? canonicalKnownKey(call.key);
-  if (knownKey === "rabbit_hole_detected") return "Rabbit hole detected";
+function fallbackTitle(call: Partial<HeadsDownCallView>): string {
+  const key = normalizeEnumValue(call.key);
+  const knownKey = canonicalKnownKey(call.knownKey) ?? canonicalKnownKey(call.key);
+  if (knownKey === null || isDeprecatedCallKey(key)) return "Needs your yes";
   if (knownKey === "attention_window_closing") return "Window closing";
-  if (knownKey === null) return "Needs your yes";
   return humanizeToken(call.key) || "HeadsDown call";
 }
 
-function fallbackBody(call: HeadsDownCallView): string {
-  const knownKey = normalizeEnumValue(call.knownKey) ?? canonicalKnownKey(call.key);
-  if (knownKey === "rabbit_hole_detected") {
-    return "Pause before this becomes cleanup work.";
+function fallbackBody(call: Partial<HeadsDownCallView>): string {
+  const key = normalizeEnumValue(call.key);
+  const knownKey = canonicalKnownKey(call.knownKey) ?? canonicalKnownKey(call.key);
+  if (knownKey === null || isDeprecatedCallKey(key)) {
+    return "HeadsDown returned a call this Claude integration does not recognize. Ask before going deeper.";
   }
 
   if (knownKey === "attention_window_closing") {
     return "Your attention window is closing. Choose whether to extend or wrap with a summary while context is fresh.";
-  }
-
-  if (knownKey === null) {
-    return "HeadsDown returned a call this Claude integration does not recognize. Ask before going deeper.";
   }
 
   return "HeadsDown returned a call without display copy. Follow the allowed actions and ask before expanding scope.";
@@ -261,6 +202,11 @@ function normalizeActionKey(value: string | null | undefined): string | null {
 function canonicalKnownKey(value: string | null | undefined): string | null {
   const key = normalizeEnumValue(value);
   return key && CANONICAL_CALL_KEYS.has(key) ? key : null;
+}
+
+function isDeprecatedCallKey(value: string | null | undefined): boolean {
+  const key = normalizeEnumValue(value);
+  return key !== null && DEPRECATED_CALL_KEYS.has(key);
 }
 
 function normalizeEnumValue(value: string | null | undefined): string | null {

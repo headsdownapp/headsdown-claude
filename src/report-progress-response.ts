@@ -16,7 +16,6 @@ export interface ReportProgressResponse {
   reported: boolean;
   runId: string | null;
   proposalRef: string | null;
-  rabbitHoleDetected: boolean;
   attentionWindowClosing: boolean;
   attentionWindow: AttentionWindowState | null;
   allowedActionKeys: string[];
@@ -34,7 +33,6 @@ export function buildReportProgressResponse(input: {
 }): ReportProgressResponse {
   const currentRun = resolveCurrentRun(input.activeRun, input.overview?.runSummaries ?? null);
   const callKey = normalizeEnumValue(currentRun?.callKey);
-  const rabbitHoleDetected = callKey === "rabbit_hole_detected";
   const attentionWindowClosing = callKey === "attention_window_closing";
   const allowedActionKeys = normalizeActionKeys(currentRun?.allowedActionKeys ?? []);
 
@@ -42,11 +40,8 @@ export function buildReportProgressResponse(input: {
     reported: true,
     runId: currentRun?.runId ?? input.activeRun?.runId ?? null,
     proposalRef: input.activeRun?.proposalId ?? null,
-    rabbitHoleDetected,
     attentionWindowClosing,
-    attentionWindow: attentionWindowClosing
-      ? buildAttentionWindowState(input.wrapUpGuidance ?? null)
-      : null,
+    attentionWindow: attentionWindowClosing ? buildAttentionWindowState(input.wrapUpGuidance ?? null) : null,
     allowedActionKeys,
   };
 }
@@ -65,11 +60,12 @@ function resolveCurrentRun(
     );
   }
 
-  const actionableRuns = runSummaries.filter((run) => {
-    const key = normalizeEnumValue(run.callKey);
-    return key === "rabbit_hole_detected" || key === "attention_window_closing";
-  });
-  return actionableRuns.length === 1 ? actionableRuns[0] : null;
+  const attentionWindowRuns = runSummaries.filter(
+    (run) => normalizeEnumValue(run.callKey) === "attention_window_closing",
+  );
+  if (attentionWindowRuns.length === 1) return attentionWindowRuns[0];
+
+  return runSummaries[0] ?? null;
 }
 
 function buildAttentionWindowState(

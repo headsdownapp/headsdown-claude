@@ -2,30 +2,55 @@ import { describe, expect, it } from "vitest";
 import { buildReportProgressResponse } from "../src/report-progress-response.js";
 
 describe("buildReportProgressResponse", () => {
-  it("detects rabbit_hole_detected for the active run summary", () => {
+  it("uses the active run summary when present", () => {
     const response = buildReportProgressResponse({
       activeRun: { runId: "run-1", proposalId: "proposal-1" },
       overview: {
-        headsdownCall: { key: "all_contained" },
+        headsdownCall: { key: "keep_it_tight" },
         runSummaries: [
           {
+            runId: "run-2",
+            callKey: "ready_to_resume",
+            allowedActionKeys: ["resume_run"],
+          },
+          {
             runId: "run-1",
-            callKey: "rabbit_hole_detected",
-            allowedActionKeys: ["pause_and_summarize", "ALLOW_FOR_DURATION"],
+            callKey: "keep_it_tight",
+            allowedActionKeys: ["NARROW_SCOPE", "ask_user", "ask_user"],
           },
         ],
       },
-      wrapUpGuidance: null,
     });
 
     expect(response).toEqual({
       reported: true,
       runId: "run-1",
       proposalRef: "proposal-1",
-      rabbitHoleDetected: true,
       attentionWindowClosing: false,
       attentionWindow: null,
-      allowedActionKeys: ["pause_and_summarize", "allow_for_duration"],
+      allowedActionKeys: ["narrow_scope", "ask_user"],
+    });
+  });
+
+  it("falls back to the first run summary when there is no active run", () => {
+    const response = buildReportProgressResponse({
+      activeRun: null,
+      overview: {
+        headsdownCall: { key: "ready_to_resume" },
+        runSummaries: [
+          { runId: "run-ready", callKey: "ready_to_resume", allowedActionKeys: ["resume_run"] },
+          { runId: "run-other", callKey: "keep_it_tight", allowedActionKeys: ["narrow_scope"] },
+        ],
+      },
+    });
+
+    expect(response).toEqual({
+      reported: true,
+      runId: "run-ready",
+      proposalRef: null,
+      attentionWindowClosing: false,
+      attentionWindow: null,
+      allowedActionKeys: ["resume_run"],
     });
   });
 
@@ -50,37 +75,22 @@ describe("buildReportProgressResponse", () => {
       },
     });
 
-    expect(response.attentionWindowClosing).toBe(true);
-    expect(response.rabbitHoleDetected).toBe(false);
-    expect(response.attentionWindow).toEqual({
-      deadlineAt: "2026-04-29T18:00:00Z",
-      thresholdMinutes: 30,
-      remainingMinutes: 12,
-      hints: ["land a minimal slice", "save a handoff"],
-    });
-    expect(response.allowedActionKeys).toEqual(["allow_for_duration", "pause_and_summarize"]);
-  });
-
-  it("does not trigger rabbit-hole flow when only another run has that call", () => {
-    const response = buildReportProgressResponse({
-      activeRun: { runId: "run-1", proposalId: "proposal-1" },
-      overview: {
-        headsdownCall: { key: "rabbit_hole_detected" },
-        runSummaries: [
-          { runId: "run-2", callKey: "rabbit_hole_detected", allowedActionKeys: ["stop_run"] },
-          { runId: "run-1", callKey: "good_to_run", allowedActionKeys: ["continue"] },
-        ],
+    expect(response).toEqual({
+      reported: true,
+      runId: "run-7",
+      proposalRef: "proposal-7",
+      attentionWindowClosing: true,
+      attentionWindow: {
+        deadlineAt: "2026-04-29T18:00:00Z",
+        thresholdMinutes: 30,
+        remainingMinutes: 12,
+        hints: ["land a minimal slice", "save a handoff"],
       },
-      wrapUpGuidance: null,
+      allowedActionKeys: ["allow_for_duration", "pause_and_summarize"],
     });
-
-    expect(response.rabbitHoleDetected).toBe(false);
-    expect(response.attentionWindowClosing).toBe(false);
-    expect(response.attentionWindow).toBeNull();
-    expect(response.allowedActionKeys).toEqual(["continue"]);
   });
 
-  it("resolves a single actionable run when there is no active run", () => {
+  it("resolves a single attention-window-closing run when there is no active run", () => {
     const response = buildReportProgressResponse({
       activeRun: null,
       overview: {
@@ -108,26 +118,31 @@ describe("buildReportProgressResponse", () => {
     expect(response.runId).toBe("run-window");
     expect(response.proposalRef).toBeNull();
     expect(response.attentionWindowClosing).toBe(true);
+    expect(response.attentionWindow).toEqual({
+      deadlineAt: null,
+      thresholdMinutes: 30,
+      remainingMinutes: 20,
+      hints: ["tighten scope"],
+    });
     expect(response.allowedActionKeys).toEqual(["pause_and_summarize", "allow_for_duration"]);
   });
 
-  it("does not emit actionable state without a target run", () => {
+  it("returns empty action context when there are no run summaries", () => {
     const response = buildReportProgressResponse({
       activeRun: null,
       overview: {
-        headsdownCall: {
-          key: "RABBIT_HOLE_DETECTED",
-          allowedActionKeys: ["pause_and_summarize", "allow_for_duration"],
-        },
+        headsdownCall: { key: "good_to_run" },
         runSummaries: null,
       },
-      wrapUpGuidance: null,
     });
 
-    expect(response.runId).toBeNull();
-    expect(response.rabbitHoleDetected).toBe(false);
-    expect(response.attentionWindowClosing).toBe(false);
-    expect(response.attentionWindow).toBeNull();
-    expect(response.allowedActionKeys).toEqual([]);
+    expect(response).toEqual({
+      reported: true,
+      runId: null,
+      proposalRef: null,
+      attentionWindowClosing: false,
+      attentionWindow: null,
+      allowedActionKeys: [],
+    });
   });
 });

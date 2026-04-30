@@ -8,11 +8,10 @@ When installed, HeadsDown helps Claude:
 1. **Keep scope tight** by checking work against approved slices and warning before scope drifts
 2. **Queue non-urgent asks off the clock** so evening and weekend interruptions wait for the next work window
 3. **Use approval gates** before broad or risky changes
-4. **Render backend-provided rabbit-hole calls** using the same canonical language as every other HeadsDown client
-5. **Pause and save handoffs** when a run should stop or narrow instead of expanding
-6. **Resume without rework** via continuation artifacts saved at wrap-up
-7. **Report outcomes** so future calls improve based on results, not raw content
-8. **Gate interruptions** by checking whether it is the right moment to ask you mid-run
+4. **Pause and save handoffs** when a run should stop or narrow before new work starts
+5. **Resume without rework** via continuation artifacts saved at wrap-up
+6. **Report outcomes** so future calls improve based on results, not raw content
+7. **Gate interruptions** by checking whether it is the right moment to ask you mid-run
 
 ## Install
 
@@ -59,7 +58,6 @@ HeadsDown value in Claude is run governance:
 - scope control
 - off-clock queueing
 - approval gates
-- rabbit-hole detection and intervention calls from HeadsDown
 - pause and handoff
 - ready-to-resume continuity
 - privacy-safe outcome reporting
@@ -90,19 +88,6 @@ Non-urgent work waits for your next work window. Save the handoff and queue for 
 Recommended action: queue_for_morning
 ```
 
-### Rabbit hole detected
-
-Claude reports privacy-safe progress metadata, renders the backend-provided call, and treats the intervention as a hard pause moment.
-
-```text
-HEADSDOWN CALL
-Rabbit hole detected
-Rabbit hole detected. Pause before this becomes cleanup work.
-
-Recommended action: pause_and_summarize
-```
-
-When this appears, stop broad exploration and choose one valid backend action while the call is still `rabbit_hole_detected`: call `headsdown_apply_action` with `action_key: "pause_and_summarize"` and a privacy-safe `handoff_summary` so the pause and handoff are saved together, or use an allowed bounded `allow_for_duration` override instead of pausing.
 
 ## What's in the Plugin
 

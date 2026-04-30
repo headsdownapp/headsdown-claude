@@ -70,32 +70,16 @@ if [ "$estimated_files" -gt 0 ]; then
   fi
 fi
 
-rabbit_hole_detected="false"
 attention_window_closing="false"
 run_id=""
 allow_duration_supported="false"
 wrap_supported="false"
 
 if [ -n "$progress_json" ] && [ "$progress_json" != "null" ]; then
-  rabbit_hole_detected=$(echo "$progress_json" | jq -r '.rabbitHoleDetected // false' 2>/dev/null || echo "false")
   attention_window_closing=$(echo "$progress_json" | jq -r '.attentionWindowClosing // false' 2>/dev/null || echo "false")
   run_id=$(echo "$progress_json" | jq -r '.runId // empty' 2>/dev/null || echo "")
   allow_duration_supported=$(echo "$progress_json" | jq -r '(.allowedActionKeys // []) | index("allow_for_duration") != null' 2>/dev/null || echo "false")
   wrap_supported=$(echo "$progress_json" | jq -r '(.allowedActionKeys // []) | index("pause_and_summarize") != null' 2>/dev/null || echo "false")
-fi
-
-if [ "$rabbit_hole_detected" = "true" ]; then
-  emit_system_message="true"
-
-  if [ -n "$run_id" ]; then
-    message="$message Rabbit hole detected. Pause before this becomes cleanup work. Claude Code controls the model. HeadsDown controls the run. Stop broad exploration. While the call is still rabbit_hole_detected, call headsdown_apply_action with run_id ${run_id}, action_key pause_and_summarize, and a privacy-safe handoff_summary so the pause and handoff are saved together."
-
-    if [ "$allow_duration_supported" = "true" ]; then
-      message="$message If continuing now is necessary, you may call headsdown_apply_action with run_id ${run_id}, action_key allow_for_duration, and duration_minutes instead of pausing. Do not call allow_for_duration after pause_and_summarize transitions the run to ready_to_resume."
-    fi
-  else
-    message="$message Rabbit hole detected. Pause before this becomes cleanup work. Claude Code controls the model. HeadsDown controls the run. Stop broad exploration and check headsdown_status to re-establish the target run before applying an action."
-  fi
 fi
 
 if [ "$attention_window_closing" = "true" ]; then

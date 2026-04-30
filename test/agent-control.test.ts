@@ -6,10 +6,8 @@ const canonicalCalls = [
   "keep_it_tight",
   "not_worth_starting_now",
   "off_the_clock",
-  "rabbit_hole_detected",
   "attention_window_closing",
   "ready_to_resume",
-  "all_contained",
   "needs_your_yes",
 ];
 
@@ -37,12 +35,11 @@ describe("renderHeadsDownCall", () => {
     }
   });
 
-  it("uses Call Trap Play Escalation structure for intervention calls", () => {
+  it("renders intervention calls with concise guidance", () => {
     for (const key of [
       "keep_it_tight",
       "not_worth_starting_now",
       "off_the_clock",
-      "rabbit_hole_detected",
       "attention_window_closing",
       "needs_your_yes",
     ]) {
@@ -53,16 +50,15 @@ describe("renderHeadsDownCall", () => {
         body: `Server body for ${key}.`,
         allowedActionKeys: ["ask_user"],
         allowedActionKnownKeys: ["ASK_USER"],
-        recommendedActionKnownKey: "ASK_USER",
-        reasonCodes: ["human_decision_needed"],
       });
 
       expect(rendered.intervention).toBe(true);
-      expect(rendered.text).toContain("Call:");
-      expect(rendered.text).toContain("Trap:");
-      expect(rendered.text).toContain("Play:");
-      expect(rendered.text).toContain("Use canonical action ask_user.");
-      expect(rendered.text).toContain("Escalation:");
+      expect(rendered.text).toContain("HeadsDown call:");
+      expect(rendered.text).toContain("Allowed actions: ask_user.");
+      expect(rendered.text).not.toContain("Call:");
+      expect(rendered.text).not.toContain("Trap:");
+      expect(rendered.text).not.toContain("Play:");
+      expect(rendered.text).not.toContain("Escalation:");
     }
   });
 
@@ -82,19 +78,21 @@ describe("renderHeadsDownCall", () => {
     expect(rendered.text).not.toContain("Trap:");
   });
 
-  it("renders rabbit-hole fallback copy from canonical key when knownKey is omitted", () => {
+  it("treats deprecated rabbit_hole_detected calls as safe fallback", () => {
     const rendered = renderHeadsDownCall({
       key: "rabbit_hole_detected",
+      knownKey: "RABBIT_HOLE_DETECTED",
+      title: "Rabbit hole detected",
+      body: "Pause before this becomes cleanup work.",
       allowedActionKeys: ["pause_and_summarize"],
     });
 
-    expect(rendered.safeFallback).toBe(false);
-    expect(rendered.title).toBe("Rabbit hole detected");
-    expect(rendered.text).toContain(
-      "Rabbit hole detected.\nPause before this becomes cleanup work.",
-    );
+    expect(rendered.knownKey).toBeNull();
+    expect(rendered.safeFallback).toBe(true);
+    expect(rendered.title).toBe("Needs your yes");
+    expect(rendered.text).toContain("does not recognize");
     expect(rendered.text).toContain("Allowed actions: pause_and_summarize.");
-    expect(rendered.text).toContain("Claude Code controls the model. HeadsDown controls the run.");
+    expect(rendered.text).not.toContain("Pause before this becomes cleanup work.");
   });
 
   it("renders attention_window_closing with extend and wrap action guidance", () => {
@@ -111,9 +109,9 @@ describe("renderHeadsDownCall", () => {
 
     expect(rendered.intervention).toBe(true);
     expect(rendered.title).toBe("Window closing");
+    expect(rendered.text).toContain("Your attention window is closing.");
     expect(rendered.text).toContain("Allowed actions: allow_for_duration, pause_and_summarize.");
-    expect(rendered.text).toContain("Use canonical action allow_for_duration.");
-    expect(rendered.text).toContain("Play:");
+    expect(rendered.text).not.toContain("Play:");
   });
 
   it("renders off_the_clock with queue_for_morning action guidance", () => {
@@ -131,7 +129,7 @@ describe("renderHeadsDownCall", () => {
     expect(rendered.intervention).toBe(true);
     expect(rendered.text).toContain("Off the clock");
     expect(rendered.text).toContain("Allowed actions: queue_for_morning, keep_queued.");
-    expect(rendered.text).toContain("Use canonical action queue_for_morning.");
+    expect(rendered.text).toContain("Claude Code controls the model. HeadsDown controls the run.");
   });
 
   it("uses server copy for unknown call keys while keeping a safe fallback", () => {
