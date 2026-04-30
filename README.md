@@ -156,6 +156,9 @@ This allows Claude to include in-progress context in its compaction summary so i
 Quick slash commands for direct access:
 - `/headsdown` or `/headsdown status` - See your current availability
 - `/headsdown auth` - Authenticate with HeadsDown
+- `/headsdown:box <duration>` - Declare a session-scoped local deadline like `30m`, `45m`, `1h`, or `1h30m`
+- `/headsdown:box status` - Show the active box deadline, remaining time, and warning threshold
+- `/headsdown:box clear` - Clear the local box and return to backend-derived attention-window behavior
 - `/headsdown:extend [minutes]` - Apply `allow_for_duration` to an active window-closing run (defaults to 15)
 - `/headsdown:wrap` - Apply `pause_and_summarize` with a privacy-safe handoff for an active window-closing run
 
@@ -346,7 +349,7 @@ This plugin is a thin wrapper around the [HeadsDown SDK](https://github.com/head
 
 **What is received:** Your availability status, execution directive, task verdicts, and digest summaries (aggregated notifications).
 
-**What is stored locally:** Your API key at `~/.config/headsdown/credentials.json` (0600 permissions). Continuation artifacts at `~/.config/headsdown/continuation.json` (0600 permissions, consumed on next session load).
+**What is stored locally:** Your API key at `~/.config/headsdown/credentials.json` (0600 permissions). Continuation artifacts at `~/.config/headsdown/continuation.json` (0600 permissions, consumed on next session load). Session-scoped box deadlines at `~/.config/headsdown/time-box-<session-hash>.json` (0600 permissions), containing only normalized timestamps and duration metadata.
 
 No telemetry. No analytics. No third-party requests.
 

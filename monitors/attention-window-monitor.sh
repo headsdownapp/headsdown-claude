@@ -52,15 +52,28 @@ while true; do
   call_key=$(echo "$status_json" | jq -r '.headsdownCall.key // .headsdownCall.knownKey // empty' 2>/dev/null || echo "")
   normalized_key=$(echo "$call_key" | tr '[:upper:]' '[:lower:]' | tr '-' '_' | xargs)
 
-  if [ "$normalized_key" = "attention_window_closing" ]; then
-    deadline_at=$(echo "$status_json" | jq -r '.availability.wrapUpGuidance.deadlineAt // empty' 2>/dev/null || echo "")
-    threshold_minutes=$(echo "$status_json" | jq -r '.availability.wrapUpGuidance.thresholdMinutes // empty' 2>/dev/null || echo "")
-    remaining_minutes=$(echo "$status_json" | jq -r '.availability.wrapUpGuidance.remainingMinutes // empty' 2>/dev/null || echo "")
-    hints=$(echo "$status_json" | jq -r '(.availability.wrapUpGuidance.hints // []) | map(select(type == "string" and length > 0)) | join("; ")' 2>/dev/null || echo "")
+  deadline_at=$(echo "$status_json" | jq -r '.effectiveAttentionWindow.deadlineAt // .availability.wrapUpGuidance.deadlineAt // empty' 2>/dev/null || echo "")
+  threshold_minutes=$(echo "$status_json" | jq -r '.effectiveAttentionWindow.thresholdMinutes // .availability.wrapUpGuidance.thresholdMinutes // empty' 2>/dev/null || echo "")
+  remaining_minutes=$(echo "$status_json" | jq -r '.effectiveAttentionWindow.remainingMinutes // .availability.wrapUpGuidance.remainingMinutes // empty' 2>/dev/null || echo "")
+  hints=$(echo "$status_json" | jq -r '(.effectiveAttentionWindow.hints // .availability.wrapUpGuidance.hints // []) | map(select(type == "string" and length > 0)) | join("; ")' 2>/dev/null || echo "")
+  effective_source=$(echo "$status_json" | jq -r '.effectiveAttentionWindow.source // empty' 2>/dev/null || echo "")
+  should_warn="false"
 
+  if [ "$normalized_key" = "attention_window_closing" ]; then
+    should_warn="true"
+  elif [ "$effective_source" = "time_box" ] && [ -n "$remaining_minutes" ] && [ -n "$threshold_minutes" ]; then
+    if [ "$remaining_minutes" -le "$threshold_minutes" ] 2>/dev/null; then
+      should_warn="true"
+    fi
+  fi
+
+  if [ "$should_warn" = "true" ]; then
     fingerprint="${deadline_at}|${threshold_minutes}"
     if [ -n "$deadline_at" ] && [ "$fingerprint" != "$last_fingerprint" ]; then
       notice="[HeadsDown] Window closing. Use /headsdown:extend to request more time or /headsdown:wrap to pause and summarize."
+      if [ "$effective_source" = "time_box" ]; then
+        notice="$notice Active box deadline is driving this warning."
+      fi
       if [ -n "$remaining_minutes" ]; then
         notice="$notice Remaining minutes: ${remaining_minutes}."
       fi

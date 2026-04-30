@@ -1054,6 +1054,16 @@ describe("Plugin structure", () => {
       expect(content).toContain("headsdown_continuation");
     });
 
+    it("documents self-declared box deadlines", async () => {
+      const skillPath = join(import.meta.dirname, "..", "skills", "headsdown", "SKILL.md");
+      const content = await readFile(skillPath, "utf-8");
+
+      expect(content).toContain("Self-Declared Deadlines (Box)");
+      expect(content).toContain("/headsdown:box <duration>");
+      expect(content).toContain("session-scoped");
+      expect(content).toContain("does not stop the agent");
+    });
+
     it("documents session resume guidance", async () => {
       const skillPath = join(import.meta.dirname, "..", "skills", "headsdown", "SKILL.md");
       const content = await readFile(skillPath, "utf-8");
@@ -1635,6 +1645,25 @@ describe("Plugin structure", () => {
       expect(content).toContain("status");
       expect(content).toContain("auth");
       expect(content).toContain("$ARGUMENTS");
+    });
+  });
+
+  describe("commands/box.md", () => {
+    it("documents local box set, status, and clear behavior", async () => {
+      const cmdPath = join(import.meta.dirname, "..", "commands", "box.md");
+      const content = await readFile(cmdPath, "utf-8");
+
+      expect(content).toMatch(/^---\n/);
+      expect(content).toContain("allowed-tools: Bash(node:*)");
+      expect(content).toContain("time-box set");
+      expect(content).toContain("time-box status");
+      expect(content).toContain("time-box clear");
+      expect(content).toContain("30m");
+      expect(content).toContain("1h30m");
+      expect(content).toContain("session-scoped local deadline");
+      expect(content).toContain("never stops Claude automatically");
+      expect(content).toContain("/headsdown:extend");
+      expect(content).toContain("/headsdown:wrap");
     });
   });
 

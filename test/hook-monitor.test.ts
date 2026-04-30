@@ -130,6 +130,41 @@ describe("attention-window monitor", () => {
     expect(notices[0]).toContain("Hints: wrap soon");
   });
 
+  it("uses the effective time-box deadline when it drives the warning", async () => {
+    await writeCliStub(`
+      if (process.argv[2] === "status") {
+        console.log(JSON.stringify({
+          headsdownCall: { key: "good_to_run" },
+          effectiveAttentionWindow: {
+            deadlineAt: "2026-04-29T17:30:00Z",
+            thresholdMinutes: 15,
+            remainingMinutes: 10,
+            hints: ["self-declared box is active"],
+            source: "time_box"
+          },
+          availability: {
+            wrapUpGuidance: {
+              deadlineAt: "2026-04-29T18:00:00Z",
+              thresholdMinutes: 30,
+              remainingMinutes: 40,
+              hints: ["backend hint"]
+            }
+          }
+        }));
+      }
+    `);
+
+    const result = await runMonitor(`time-box-monitor-${process.pid}-${Date.now()}`, 600);
+    const notices = result.stdout
+      .split("\n")
+      .filter((line) => line.includes("[HeadsDown] Window closing"));
+
+    expect(notices).toHaveLength(1);
+    expect(notices[0]).toContain("Active box deadline is driving this warning");
+    expect(notices[0]).toContain("Remaining minutes: 10");
+    expect(notices[0]).toContain("self-declared box is active");
+  });
+
   it("emits a diagnostic when status polling fails", async () => {
     await writeCliStub(`
       if (process.argv[2] === "status") {

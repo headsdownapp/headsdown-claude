@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { buildReportProgressResponse } from "../src/report-progress-response.js";
+import { createTimeBox } from "../src/time-box.js";
 
 describe("buildReportProgressResponse", () => {
   it("uses the active run summary when present", () => {
@@ -203,5 +204,78 @@ describe("buildReportProgressResponse", () => {
       remainingMinutes: null,
       hints: ["keep"],
     });
+  });
+
+  it("uses an earlier box deadline for attention-window context", () => {
+    const timeBox = createTimeBox({
+      durationText: "30m",
+      sessionIdHash: "session-hash",
+      now: new Date("2026-04-29T16:00:00Z"),
+    });
+
+    const response = buildReportProgressResponse({
+      activeRun: { runId: "run-7", proposalId: "proposal-7" },
+      overview: {
+        headsdownCall: { key: "attention_window_closing" },
+        runSummaries: [
+          {
+            runId: "run-7",
+            callKey: "attention_window_closing",
+            allowedActionKeys: ["allow_for_duration", "pause_and_summarize"],
+          },
+        ],
+      },
+      wrapUpGuidance: {
+        deadlineAt: "2026-04-29T17:00:00Z",
+        thresholdMinutes: 30,
+        remainingMinutes: 60,
+        hints: ["backend hint"],
+      },
+      timeBox,
+      now: new Date("2026-04-29T16:10:00Z"),
+    });
+
+    expect(response.attentionWindowClosing).toBe(true);
+    expect(response.attentionWindow).toEqual({
+      deadlineAt: "2026-04-29T16:30:00.000Z",
+      thresholdMinutes: 15,
+      remainingMinutes: 20,
+      hints: [
+        "backend hint",
+        "Self-declared box is active. Keep scope tight before the deadline; do not stop automatically when it passes.",
+      ],
+    });
+  });
+
+  it("can surface a local box warning even before backend call state changes", () => {
+    const timeBox = createTimeBox({
+      durationText: "30m",
+      sessionIdHash: "session-hash",
+      now: new Date("2026-04-29T16:00:00Z"),
+    });
+
+    const response = buildReportProgressResponse({
+      activeRun: { runId: "run-7", proposalId: "proposal-7" },
+      overview: {
+        headsdownCall: { key: "good_to_run" },
+        runSummaries: [
+          {
+            runId: "run-7",
+            callKey: "good_to_run",
+            allowedActionKeys: ["narrow_scope"],
+          },
+        ],
+      },
+      timeBox,
+      now: new Date("2026-04-29T16:20:00Z"),
+    });
+
+    expect(response.attentionWindowClosing).toBe(true);
+    expect(response.attentionWindow).toMatchObject({
+      deadlineAt: "2026-04-29T16:30:00.000Z",
+      thresholdMinutes: 15,
+      remainingMinutes: 10,
+    });
+    expect(response.allowedActionKeys).toEqual(["narrow_scope"]);
   });
 });

@@ -1,5 +1,7 @@
 import type { AgentControlOverviewView, AgentRunSummaryView } from "./agent-control.js";
 import { normalizeHeadsDownCallKey } from "./headsdown-call-keys.js";
+import { resolveEffectiveAttentionWindow, isWithinWarningWindow } from "./time-box.js";
+import type { TimeBoxState } from "./time-box.js";
 
 export interface ActiveRunRef {
   runId: string;
@@ -48,6 +50,8 @@ export function buildReportProgressResponse(input: {
     remainingMinutes?: number | null;
     hints?: string[] | null;
   } | null;
+  timeBox?: TimeBoxState | null;
+  now?: Date;
 }): ReportProgressResponse {
   const currentRun = resolveCurrentRunContext({
     activeRun: input.activeRun,
@@ -60,11 +64,21 @@ export function buildReportProgressResponse(input: {
     allowedActionKeys: currentRun.allowedActionKeys,
   } satisfies BaseReportProgressResponse;
 
-  if (currentRun.callKey === "attention_window_closing") {
+  const effectiveAttentionWindow = resolveEffectiveAttentionWindow({
+    backend: input.wrapUpGuidance ?? null,
+    timeBox: input.timeBox ?? null,
+    now: input.now,
+    forceTimeBoxWarning: currentRun.callKey === "attention_window_closing",
+  });
+
+  if (
+    currentRun.callKey === "attention_window_closing" ||
+    (effectiveAttentionWindow && isWithinWarningWindow(effectiveAttentionWindow))
+  ) {
     return {
       ...base,
       attentionWindowClosing: true,
-      attentionWindow: buildAttentionWindowState(input.wrapUpGuidance ?? null),
+      attentionWindow: buildAttentionWindowState(effectiveAttentionWindow),
     };
   }
 

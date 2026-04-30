@@ -16,6 +16,13 @@ import { getAgentControlOverviewCompat, renderHeadsDownCall } from "./agent-cont
 import { reportRunOutcome, reportRunProgress } from "./agent-run-events.js";
 import { getActiveRunStateForSession } from "./agent-run-state.js";
 import { LocalActionMarkerStore } from "./headsdown-action-executor.js";
+import { LocalTimeBoxStore } from "./time-box-store.js";
+import {
+  buildTimeBoxStatus,
+  createTimeBox,
+  formatTimeBoxConfirmation,
+  resolveEffectiveAttentionWindow,
+} from "./time-box.js";
 import {
   buildReportProgressResponse,
   resolveCurrentRunContext,
@@ -52,6 +59,8 @@ async function main() {
       return await reportProgress();
     case "action-marker":
       return await actionMarker();
+    case "time-box":
+      return await timeBox();
     default:
       process.exit(1);
   }
@@ -68,6 +77,13 @@ async function status() {
     : null;
   const activeRun = await getActiveRunStateForSession();
   const currentRun = resolveCurrentRunContext({ activeRun, overview });
+  const timeBoxState = await new LocalTimeBoxStore().load();
+  const timeBoxStatus = buildTimeBoxStatus(timeBoxState);
+  const effectiveAttentionWindow = resolveEffectiveAttentionWindow({
+    backend: availability.wrapUpGuidance ?? null,
+    timeBox: timeBoxState,
+    forceTimeBoxWarning: true,
+  });
 
   console.log(
     JSON.stringify(
@@ -77,12 +93,17 @@ async function status() {
         headsdownCall: overview?.headsdownCall ?? null,
         renderedHeadsDownCall,
         currentRun,
+        timeBox: timeBoxStatus,
+        effectiveAttentionWindow,
         summary: formatSummary(contract, availability, renderedHeadsDownCall?.title),
         wrapUpInstruction: resolveExecutionInstruction({
           contract,
           schedule: availability,
         }),
-        remainingMinutes: availability.wrapUpGuidance?.remainingMinutes ?? null,
+        remainingMinutes:
+          effectiveAttentionWindow?.remainingMinutes ??
+          availability.wrapUpGuidance?.remainingMinutes ??
+          null,
       },
       null,
       2,
@@ -192,6 +213,76 @@ async function actionMarker() {
     case "active": {
       const markers = await store.listActive();
       console.log(JSON.stringify(markers[0] ?? null, null, 2));
+      break;
+    }
+    default:
+      process.exit(1);
+  }
+}
+
+/** Manage a session-scoped local HeadsDown box deadline. */
+async function timeBox() {
+  const subcommand = process.argv[3];
+  const store = new LocalTimeBoxStore();
+
+  switch (subcommand) {
+    case "set": {
+      const durationText = process.argv[4];
+      if (!durationText) {
+        console.error("Use a duration like 30m, 45m, 1h, or 1h30m.");
+        process.exit(1);
+      }
+
+      try {
+        const state = createTimeBox({ durationText, sessionIdHash: store.sessionHash });
+        await store.save(state);
+        console.log(
+          JSON.stringify(
+            {
+              ok: true,
+              action: "set",
+              timeBox: buildTimeBoxStatus(state),
+              message: formatTimeBoxConfirmation(state),
+            },
+            null,
+            2,
+          ),
+        );
+      } catch (error) {
+        console.error(error instanceof Error ? error.message : String(error));
+        process.exit(1);
+      }
+      break;
+    }
+    case "status": {
+      const state = await store.load();
+      console.log(JSON.stringify(buildTimeBoxStatus(state), null, 2));
+      break;
+    }
+    case "clear": {
+      await store.clear();
+      console.log(
+        JSON.stringify(
+          {
+            ok: true,
+            action: "clear",
+            timeBox: buildTimeBoxStatus(null),
+            message:
+              "HeadsDown box cleared. Backend-derived attention-window behavior is active again.",
+          },
+          null,
+          2,
+        ),
+      );
+      break;
+    }
+    case "active": {
+      const state = await store.load();
+      if (!state) {
+        console.log(JSON.stringify(null));
+        process.exit(1);
+      }
+      console.log(JSON.stringify(buildTimeBoxStatus(state), null, 2));
       break;
     }
     default:
@@ -409,6 +500,7 @@ async function reportProgress() {
 
   try {
     const activeRun = await getActiveRunStateForSession();
+    const timeBoxState = await new LocalTimeBoxStore().load();
     const client = await HeadsDownClient.fromCredentials();
     const actorClient = withActorContext(client, "cli-report-progress");
     await reportRunProgress(actorClient, { toolType, filesModifiedCount });
@@ -428,6 +520,7 @@ async function reportProgress() {
           activeRun,
           overview,
           wrapUpGuidance,
+          timeBox: timeBoxState,
         }),
       ),
     );
