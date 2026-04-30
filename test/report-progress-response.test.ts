@@ -86,6 +86,7 @@ describe("buildReportProgressResponse", () => {
         thresholdMinutes: 30,
         remainingMinutes: 12,
         hints: ["land a minimal slice", "save a handoff"],
+        source: "backend",
       },
       allowedActionKeys: ["allow_for_duration", "pause_and_summarize"],
     });
@@ -124,6 +125,7 @@ describe("buildReportProgressResponse", () => {
       thresholdMinutes: 30,
       remainingMinutes: 20,
       hints: ["tighten scope"],
+      source: "backend",
     });
     expect(response.allowedActionKeys).toEqual(["pause_and_summarize", "allow_for_duration"]);
   });
@@ -158,6 +160,7 @@ describe("buildReportProgressResponse", () => {
         thresholdMinutes: 30,
         remainingMinutes: 8,
         hints: ["handoff soon"],
+        source: "backend",
       },
       allowedActionKeys: ["pause_and_summarize", "allow_for_duration"],
     });
@@ -203,6 +206,7 @@ describe("buildReportProgressResponse", () => {
       thresholdMinutes: null,
       remainingMinutes: null,
       hints: ["keep"],
+      source: "backend",
     });
   });
 
@@ -244,6 +248,7 @@ describe("buildReportProgressResponse", () => {
         "backend hint",
         "Self-declared box is active. Keep scope tight before the deadline; do not stop automatically when it passes.",
       ],
+      source: "time_box",
     });
   });
 
@@ -275,6 +280,7 @@ describe("buildReportProgressResponse", () => {
       deadlineAt: "2026-04-29T16:30:00.000Z",
       thresholdMinutes: 15,
       remainingMinutes: 10,
+      source: "time_box",
     });
     expect(response.allowedActionKeys).toEqual(["narrow_scope"]);
   });

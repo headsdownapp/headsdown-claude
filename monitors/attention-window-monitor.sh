@@ -48,7 +48,12 @@ while true; do
     continue
   fi
 
-  last_error_fingerprint=""
+  time_box_error=$(echo "$status_json" | jq -r '.timeBoxError // empty' 2>/dev/null || echo "")
+  if [ -n "$time_box_error" ]; then
+    emit_diagnostic "time-box-error:${time_box_error}" "${time_box_error}"
+  else
+    last_error_fingerprint=""
+  fi
   call_key=$(echo "$status_json" | jq -r '.headsdownCall.key // .headsdownCall.knownKey // empty' 2>/dev/null || echo "")
   normalized_key=$(echo "$call_key" | tr '[:upper:]' '[:lower:]' | tr '-' '_' | xargs)
 
@@ -70,9 +75,13 @@ while true; do
   if [ "$should_warn" = "true" ]; then
     fingerprint="${deadline_at}|${threshold_minutes}"
     if [ -n "$deadline_at" ] && [ "$fingerprint" != "$last_fingerprint" ]; then
-      notice="[HeadsDown] Window closing. Use /headsdown:extend to request more time or /headsdown:wrap to pause and summarize."
-      if [ "$effective_source" = "time_box" ]; then
-        notice="$notice Active box deadline is driving this warning."
+      if [ "$effective_source" = "time_box" ] && [ "$normalized_key" != "attention_window_closing" ]; then
+        notice="[HeadsDown] Box deadline near. Keep scope tight; the box will not stop work automatically. Use /headsdown:box clear to clear it or /headsdown:box <duration> to replace it."
+      else
+        notice="[HeadsDown] Window closing. Use /headsdown:extend to request more time or /headsdown:wrap to pause and summarize."
+        if [ "$effective_source" = "time_box" ]; then
+          notice="$notice Active box deadline is driving this warning."
+        fi
       fi
       if [ -n "$remaining_minutes" ]; then
         notice="$notice Remaining minutes: ${remaining_minutes}."

@@ -1582,7 +1582,8 @@ describe("Plugin structure", () => {
     it("reports progress in fail-open mode", async () => {
       const content = await readFile(scriptPath, "utf-8");
       expect(content).toContain('node "$CLI" report-progress "$TOOL_TYPE" "$count"');
-      expect(content).toContain('|| progress_json=""');
+      expect(content).toContain('progress_command_error="HeadsDown progress command failed."');
+      expect(content).toContain("HeadsDown progress command warning");
     });
 
     it("does not include deprecated intervention copy", async () => {

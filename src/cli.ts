@@ -77,11 +77,11 @@ async function status() {
     : null;
   const activeRun = await getActiveRunStateForSession();
   const currentRun = resolveCurrentRunContext({ activeRun, overview });
-  const timeBoxState = await new LocalTimeBoxStore().load();
-  const timeBoxStatus = buildTimeBoxStatus(timeBoxState);
+  const timeBoxLoad = await loadLocalTimeBoxForStatus();
+  const timeBoxStatus = buildTimeBoxStatus(timeBoxLoad.state);
   const effectiveAttentionWindow = resolveEffectiveAttentionWindow({
     backend: availability.wrapUpGuidance ?? null,
-    timeBox: timeBoxState,
+    timeBox: timeBoxLoad.state,
     forceTimeBoxWarning: true,
   });
 
@@ -94,6 +94,7 @@ async function status() {
         renderedHeadsDownCall,
         currentRun,
         timeBox: timeBoxStatus,
+        timeBoxError: timeBoxLoad.error,
         effectiveAttentionWindow,
         summary: formatSummary(contract, availability, renderedHeadsDownCall?.title),
         wrapUpInstruction: resolveExecutionInstruction({
@@ -255,34 +256,49 @@ async function timeBox() {
       break;
     }
     case "status": {
-      const state = await store.load();
-      console.log(JSON.stringify(buildTimeBoxStatus(state), null, 2));
+      try {
+        const state = await store.load();
+        console.log(JSON.stringify(buildTimeBoxStatus(state), null, 2));
+      } catch (error) {
+        console.error(error instanceof Error ? error.message : String(error));
+        process.exit(1);
+      }
       break;
     }
     case "clear": {
-      await store.clear();
-      console.log(
-        JSON.stringify(
-          {
-            ok: true,
-            action: "clear",
-            timeBox: buildTimeBoxStatus(null),
-            message:
-              "HeadsDown box cleared. Backend-derived attention-window behavior is active again.",
-          },
-          null,
-          2,
-        ),
-      );
+      try {
+        await store.clear();
+        console.log(
+          JSON.stringify(
+            {
+              ok: true,
+              action: "clear",
+              timeBox: buildTimeBoxStatus(null),
+              message:
+                "HeadsDown box cleared. Backend-derived attention-window behavior is active again.",
+            },
+            null,
+            2,
+          ),
+        );
+      } catch (error) {
+        console.error(error instanceof Error ? error.message : String(error));
+        process.exit(1);
+      }
       break;
     }
     case "active": {
-      const state = await store.load();
-      if (!state) {
-        console.log(JSON.stringify(null));
+      try {
+        const state = await store.load();
+        if (!state) {
+          console.log(JSON.stringify(null));
+          process.exit(1);
+        }
+        console.log(JSON.stringify(buildTimeBoxStatus(state), null, 2));
+      } catch (error) {
+        console.error(error instanceof Error ? error.message : String(error));
         process.exit(1);
       }
-      console.log(JSON.stringify(buildTimeBoxStatus(state), null, 2));
       break;
     }
     default:
@@ -494,44 +510,80 @@ async function report() {
   }
 }
 
+async function loadLocalTimeBoxForStatus(): Promise<{
+  state: Awaited<ReturnType<LocalTimeBoxStore["load"]>>;
+  error: string | null;
+}> {
+  try {
+    return { state: await new LocalTimeBoxStore().load(), error: null };
+  } catch (error) {
+    return { state: null, error: error instanceof Error ? error.message : String(error) };
+  }
+}
+
 async function reportProgress() {
   const toolType = process.argv[3] as "read" | "write" | "external" | undefined;
   const filesModifiedCount = parseNonNegativeInteger(process.argv[4]);
 
   try {
     const activeRun = await getActiveRunStateForSession();
-    const timeBoxState = await new LocalTimeBoxStore().load();
+    const timeBoxLoad = await loadLocalTimeBoxForStatus();
     const client = await HeadsDownClient.fromCredentials();
     const actorClient = withActorContext(client, "cli-report-progress");
-    await reportRunProgress(actorClient, { toolType, filesModifiedCount });
+    let progressReportError: string | null = null;
+    try {
+      await reportRunProgress(actorClient, { toolType, filesModifiedCount });
+    } catch (error) {
+      progressReportError = `Could not send HeadsDown progress telemetry: ${safeErrorMessage(error)}`;
+    }
 
     const overview = await getAgentControlOverviewCompat(actorClient);
     let wrapUpGuidance: ScheduleResolution["wrapUpGuidance"] | null = null;
+    let availabilityError: string | null = null;
     try {
       const { schedule: availability } = await actorClient.getAvailability();
       wrapUpGuidance = availability.wrapUpGuidance ?? null;
-    } catch {
+    } catch (error) {
       wrapUpGuidance = null;
+      availabilityError = `Could not query HeadsDown availability for wrap-up guidance: ${safeErrorMessage(error)}`;
     }
 
     console.log(
-      JSON.stringify(
-        buildReportProgressResponse({
+      JSON.stringify({
+        ...buildReportProgressResponse({
           activeRun,
           overview,
           wrapUpGuidance,
-          timeBox: timeBoxState,
+          timeBox: timeBoxLoad.state,
         }),
-      ),
+        ...(timeBoxLoad.error ? { timeBoxError: timeBoxLoad.error } : {}),
+        ...(availabilityError ? { availabilityError } : {}),
+        ...(progressReportError ? { progressReportError } : {}),
+      }),
     );
-  } catch {
-    console.log(JSON.stringify({ reported: false, reason: "unavailable" }));
+  } catch (error) {
+    const authFailure = error instanceof AuthError;
+    console.log(
+      JSON.stringify({
+        reported: false,
+        reason: "unavailable",
+        errorCategory: authFailure ? "auth" : "unexpected",
+        message: authFailure
+          ? "HeadsDown authentication is unavailable. Run /headsdown:login before relying on progress reporting."
+          : "HeadsDown progress reporting is unavailable. Check the included details or try again later.",
+        details: safeErrorMessage(error),
+      }),
+    );
   }
 }
 
 function parseNonNegativeInteger(value: string | undefined): number | undefined {
   if (!value || !/^\d+$/.test(value)) return undefined;
   return Number(value);
+}
+
+function safeErrorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
 }
 
 main().catch((error) => {

@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { LocalTimeBoxStore, hashSessionId } from "../src/time-box-store.js";
@@ -63,6 +63,50 @@ describe("LocalTimeBoxStore", () => {
     await store.save(state);
     expect(await store.clear()).toBe(true);
     expect(await store.load()).toBeNull();
-    expect(await store.clear()).toBe(false);
+    expect(await store.clear()).toBe(true);
+  });
+
+  it("surfaces corrupted stored data instead of treating it as no box", async () => {
+    const path = join(tempDir, "time-box.json");
+    const sessionHash = hashSessionId("session-a");
+    const store = new LocalTimeBoxStore(path, sessionHash);
+
+    await writeFile(path, "not-json");
+
+    await expect(store.load()).rejects.toThrow(/Invalid HeadsDown box/);
+  });
+
+  it("surfaces stale or contradictory stored data", async () => {
+    const path = join(tempDir, "time-box.json");
+    const sessionHash = hashSessionId("session-a");
+    const store = new LocalTimeBoxStore(path, sessionHash);
+
+    await writeFile(
+      path,
+      JSON.stringify({
+        schemaVersion: 1,
+        sessionIdHash: sessionHash,
+        durationMinutes: 45,
+        createdAt: "2026-04-29T16:00:00.000Z",
+        expiresAt: "2026-04-29T16:05:00.000Z",
+        source: "slash_command",
+      }),
+    );
+
+    await expect(store.load()).rejects.toThrow(/durationMinutes/);
+  });
+
+  it("rejects saving a box for a different session", async () => {
+    const path = join(tempDir, "time-box.json");
+    const sessionHash = hashSessionId("session-a");
+    const otherSessionHash = hashSessionId("session-b");
+    const store = new LocalTimeBoxStore(path, sessionHash);
+    const state = createTimeBox({
+      durationText: "45m",
+      sessionIdHash: otherSessionHash,
+      now: new Date("2026-04-29T16:00:00Z"),
+    });
+
+    await expect(store.save(state)).rejects.toThrow(/different Claude session/);
   });
 });

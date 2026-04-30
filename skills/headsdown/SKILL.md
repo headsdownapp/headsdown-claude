@@ -133,7 +133,7 @@ Immediate behavior:
 
 ## Self-Declared Deadlines (Box)
 
-Use `/headsdown:box <duration>` when the user wants a focused work deadline that is shorter than the current calendar-derived window. Accepted forms include `30m`, `45m`, `1h`, and `1h30m`.
+Use `/headsdown:box <duration>` when the user wants a focused work deadline that is shorter than the current calendar-derived window. Example forms include `30m`, `45m`, `1h`, and `1h30m`.
 
 A box is local and session-scoped. It tightens the effective attention-window deadline for Claude Code hooks and monitors so warnings arrive earlier. It does not create an availability override, does not change model routing, and does not stop the agent when the deadline passes.
 

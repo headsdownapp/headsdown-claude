@@ -349,7 +349,7 @@ This plugin is a thin wrapper around the [HeadsDown SDK](https://github.com/head
 
 **What is received:** Your availability status, execution directive, task verdicts, and digest summaries (aggregated notifications).
 
-**What is stored locally:** Your API key at `~/.config/headsdown/credentials.json` (0600 permissions). Continuation artifacts at `~/.config/headsdown/continuation.json` (0600 permissions, consumed on next session load). Session-scoped box deadlines at `~/.config/headsdown/time-box-<session-hash>.json` (0600 permissions), containing only normalized timestamps and duration metadata.
+**What is stored locally:** Your API key at `~/.config/headsdown/credentials.json` (0600 permissions). Continuation artifacts at `~/.config/headsdown/continuation.json` (0600 permissions, consumed on next session load). Session-scoped box deadlines at `~/.config/headsdown/time-box-<session-hash>.json` (0600 permissions), containing the session hash plus timestamp, duration, schema, and source metadata.
 
 No telemetry. No analytics. No third-party requests.
 

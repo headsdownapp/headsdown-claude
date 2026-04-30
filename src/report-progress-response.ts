@@ -1,7 +1,7 @@
 import type { AgentControlOverviewView, AgentRunSummaryView } from "./agent-control.js";
 import { normalizeHeadsDownCallKey } from "./headsdown-call-keys.js";
 import { resolveEffectiveAttentionWindow, isWithinWarningWindow } from "./time-box.js";
-import type { TimeBoxState } from "./time-box.js";
+import type { EffectiveAttentionWindow, TimeBoxState } from "./time-box.js";
 
 export interface ActiveRunRef {
   runId: string;
@@ -13,6 +13,7 @@ export interface AttentionWindowState {
   thresholdMinutes: number | null;
   remainingMinutes: number | null;
   hints: string[];
+  source: "backend" | "time_box" | null;
 }
 
 export interface CurrentRunContext {
@@ -140,14 +141,7 @@ function resolveOverviewCallKey(
   return normalizeHeadsDownCallKey(call?.knownKey) ?? normalizeHeadsDownCallKey(call?.key);
 }
 
-function buildAttentionWindowState(
-  input: {
-    deadlineAt?: string | null;
-    thresholdMinutes?: number | null;
-    remainingMinutes?: number | null;
-    hints?: string[] | null;
-  } | null,
-): AttentionWindowState {
+function buildAttentionWindowState(input: EffectiveAttentionWindow | null): AttentionWindowState {
   return {
     deadlineAt: normalizeIsoTimestamp(input?.deadlineAt),
     thresholdMinutes: normalizeNonNegativeFiniteNumber(input?.thresholdMinutes),
@@ -157,6 +151,7 @@ function buildAttentionWindowState(
           .map((hint) => (typeof hint === "string" ? hint.trim() : ""))
           .filter((hint): hint is string => hint.length > 0)
       : [],
+    source: input?.source ?? null,
   };
 }
 
