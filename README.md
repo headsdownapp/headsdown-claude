@@ -158,7 +158,7 @@ Quick slash commands for direct access:
 - `/headsdown auth` - Authenticate with HeadsDown
 - `/headsdown:box <duration>` - Declare a session-scoped local deadline like `30m`, `45m`, `1h`, or `1h30m`
 - `/headsdown:box status` - Show the active box deadline, remaining time, and warning threshold
-- `/headsdown:box clear` - Clear the local box and return to backend-derived attention-window behavior
+- `/headsdown:box clear` - Clear the local box so future warnings use backend-derived attention-window behavior when available
 - `/headsdown:extend [minutes]` - Apply `allow_for_duration` to an active window-closing run (defaults to 15)
 - `/headsdown:wrap` - Apply `pause_and_summarize` with a privacy-safe handoff for an active window-closing run
 

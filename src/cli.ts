@@ -21,10 +21,12 @@ import {
   buildTimeBoxStatus,
   createTimeBox,
   formatTimeBoxConfirmation,
+  isWithinWarningWindow,
   resolveEffectiveAttentionWindow,
 } from "./time-box.js";
 import {
   buildReportProgressResponse,
+  buildReportProgressUnavailableResponse,
   resolveCurrentRunContext,
 } from "./report-progress-response.js";
 import type {
@@ -68,42 +70,73 @@ async function main() {
 
 /** Full availability status as JSON. */
 async function status() {
-  const client = await HeadsDownClient.fromCredentials();
-  const actorClient = withActorContext(client, "cli-status");
-  const { contract, schedule: availability } = await actorClient.getAvailability();
-  const overview = await getAgentControlOverviewCompat(actorClient);
+  const timeBoxLoad = await loadLocalTimeBoxForStatus();
+  const timeBoxStatus = buildTimeBoxStatus(timeBoxLoad.state);
+  const activeRun = await getActiveRunStateForSession().catch(() => null);
+  let contract: Contract | null = null;
+  let availability: ScheduleResolution | null = null;
+  let overview: Awaited<ReturnType<typeof getAgentControlOverviewCompat>> = null;
+  let availabilityError: string | null = null;
+
+  try {
+    const client = await HeadsDownClient.fromCredentials();
+    const actorClient = withActorContext(client, "cli-status");
+    try {
+      const response = await actorClient.getAvailability();
+      contract = response.contract;
+      availability = response.schedule;
+    } catch (error) {
+      availabilityError = `Could not query HeadsDown availability: ${safeErrorMessage(error)}`;
+    }
+    overview = await getAgentControlOverviewCompat(actorClient);
+  } catch (error) {
+    availabilityError =
+      error instanceof AuthError
+        ? `HeadsDown authentication is unavailable. Run /headsdown auth before relying on status.`
+        : `HeadsDown status is unavailable: ${safeErrorMessage(error)}`;
+  }
+
   const renderedHeadsDownCall = overview?.headsdownCall
     ? renderHeadsDownCall(overview.headsdownCall)
     : null;
-  const activeRun = await getActiveRunStateForSession();
   const currentRun = resolveCurrentRunContext({ activeRun, overview });
-  const timeBoxLoad = await loadLocalTimeBoxForStatus();
-  const timeBoxStatus = buildTimeBoxStatus(timeBoxLoad.state);
   const effectiveAttentionWindow = resolveEffectiveAttentionWindow({
-    backend: availability.wrapUpGuidance ?? null,
+    backend: availability?.wrapUpGuidance ?? null,
     timeBox: timeBoxLoad.state,
-    forceTimeBoxWarning: true,
+    forceTimeBoxWarning: currentRun.callKey === "attention_window_closing",
   });
+  const attentionWindowClosing =
+    !!effectiveAttentionWindow &&
+    (currentRun.callKey === "attention_window_closing" ||
+      isWithinWarningWindow(effectiveAttentionWindow));
 
   console.log(
     JSON.stringify(
       {
         contract,
         availability,
+        availabilityError,
         headsdownCall: overview?.headsdownCall ?? null,
         renderedHeadsDownCall,
         currentRun,
         timeBox: timeBoxStatus,
         timeBoxError: timeBoxLoad.error,
+        attentionWindowClosing,
         effectiveAttentionWindow,
-        summary: formatSummary(contract, availability, renderedHeadsDownCall?.title),
-        wrapUpInstruction: resolveExecutionInstruction({
-          contract,
-          schedule: availability,
-        }),
+        summary:
+          contract && availability
+            ? formatSummary(contract, availability, renderedHeadsDownCall?.title)
+            : null,
+        wrapUpInstruction:
+          contract && availability
+            ? resolveExecutionInstruction({
+                contract,
+                schedule: availability,
+              })
+            : null,
         remainingMinutes:
           effectiveAttentionWindow?.remainingMinutes ??
-          availability.wrapUpGuidance?.remainingMinutes ??
+          availability?.wrapUpGuidance?.remainingMinutes ??
           null,
       },
       null,
@@ -524,10 +557,10 @@ async function loadLocalTimeBoxForStatus(): Promise<{
 async function reportProgress() {
   const toolType = process.argv[3] as "read" | "write" | "external" | undefined;
   const filesModifiedCount = parseNonNegativeInteger(process.argv[4]);
+  const activeRun = await getActiveRunStateForSession().catch(() => null);
+  const timeBoxLoad = await loadLocalTimeBoxForStatus();
 
   try {
-    const activeRun = await getActiveRunStateForSession();
-    const timeBoxLoad = await loadLocalTimeBoxForStatus();
     const client = await HeadsDownClient.fromCredentials();
     const actorClient = withActorContext(client, "cli-report-progress");
     let progressReportError: string | null = null;
@@ -565,13 +598,16 @@ async function reportProgress() {
     const authFailure = error instanceof AuthError;
     console.log(
       JSON.stringify({
-        reported: false,
-        reason: "unavailable",
-        errorCategory: authFailure ? "auth" : "unexpected",
-        message: authFailure
-          ? "HeadsDown authentication is unavailable. Run /headsdown:login before relying on progress reporting."
-          : "HeadsDown progress reporting is unavailable. Check the included details or try again later.",
-        details: safeErrorMessage(error),
+        ...buildReportProgressUnavailableResponse({
+          errorCategory: authFailure ? "auth" : "unexpected",
+          message: authFailure
+            ? "HeadsDown authentication is unavailable. Run /headsdown auth before relying on progress reporting."
+            : "HeadsDown progress reporting is unavailable. Check the included details or try again later.",
+          details: safeErrorMessage(error),
+          activeRun,
+          timeBox: timeBoxLoad.state,
+        }),
+        ...(timeBoxLoad.error ? { timeBoxError: timeBoxLoad.error } : {}),
       }),
     );
   }

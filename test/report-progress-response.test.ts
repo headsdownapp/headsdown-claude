@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { buildReportProgressResponse } from "../src/report-progress-response.js";
+import {
+  buildReportProgressResponse,
+  buildReportProgressUnavailableResponse,
+} from "../src/report-progress-response.js";
 import { createTimeBox } from "../src/time-box.js";
 
 describe("buildReportProgressResponse", () => {
@@ -249,6 +252,72 @@ describe("buildReportProgressResponse", () => {
         "Self-declared box is active. Keep scope tight before the deadline; do not stop automatically when it passes.",
       ],
       source: "time_box",
+    });
+  });
+
+  it("does not surface attention-window guidance during a full-depth override", () => {
+    const timeBox = createTimeBox({
+      durationText: "30m",
+      sessionIdHash: "session-hash",
+      now: new Date("2026-04-29T16:00:00Z"),
+    });
+
+    const response = buildReportProgressResponse({
+      activeRun: { runId: "run-7", proposalId: "proposal-7" },
+      overview: {
+        headsdownCall: { key: "attention_window_closing" },
+        runSummaries: [
+          {
+            runId: "run-7",
+            callKey: "attention_window_closing",
+            allowedActionKeys: ["allow_for_duration", "pause_and_summarize"],
+          },
+        ],
+      },
+      wrapUpGuidance: {
+        active: true,
+        selectedMode: "full_depth",
+        source: "forced_full_depth",
+        deadlineAt: "2026-04-29T17:00:00Z",
+        thresholdMinutes: 30,
+        remainingMinutes: 10,
+        hints: ["full-depth override active"],
+      },
+      timeBox,
+      now: new Date("2026-04-29T16:20:00Z"),
+    });
+
+    expect(response.attentionWindowClosing).toBe(false);
+    expect(response.attentionWindow).toBeNull();
+  });
+
+  it("keeps local box warning fields when progress reporting is unavailable", () => {
+    const timeBox = createTimeBox({
+      durationText: "30m",
+      sessionIdHash: "session-hash",
+      now: new Date("2026-04-29T16:00:00Z"),
+    });
+
+    const response = buildReportProgressUnavailableResponse({
+      errorCategory: "auth",
+      message:
+        "HeadsDown authentication is unavailable. Run /headsdown auth before relying on progress reporting.",
+      details: "Missing credentials",
+      timeBox,
+      now: new Date("2026-04-29T16:20:00Z"),
+    });
+
+    expect(response).toMatchObject({
+      reported: false,
+      reason: "unavailable",
+      errorCategory: "auth",
+      attentionWindowClosing: true,
+      attentionWindow: {
+        deadlineAt: "2026-04-29T16:30:00.000Z",
+        thresholdMinutes: 15,
+        remainingMinutes: 10,
+        source: "time_box",
+      },
     });
   });
 

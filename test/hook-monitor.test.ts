@@ -178,7 +178,7 @@ describe("post-tool-use hook", () => {
           reported: false,
           reason: "unavailable",
           errorCategory: "auth",
-          message: "HeadsDown authentication is unavailable. Run /headsdown:login before relying on progress reporting.",
+          message: "HeadsDown authentication is unavailable. Run /headsdown auth before relying on progress reporting.",
           details: "Missing credentials",
           availabilityError: "Could not query HeadsDown availability for wrap-up guidance: network down",
           progressReportError: "Could not send HeadsDown progress telemetry."
@@ -326,6 +326,61 @@ describe("attention-window monitor", () => {
     expect(notices).toHaveLength(1);
     expect(notices[0]).toContain("Remaining minutes: 6");
     expect(notices[0]).toContain("Hints: wrap soon");
+  });
+
+  it("emits a window-closing notice when deadlineAt is null but remainingMinutes is present", async () => {
+    await writeCliStub(`
+      if (process.argv[2] === "status") {
+        console.log(JSON.stringify({
+          headsdownCall: { key: "attention_window_closing" },
+          availability: {
+            wrapUpGuidance: {
+              deadlineAt: null,
+              thresholdMinutes: 30,
+              remainingMinutes: 6,
+              hints: ["wrap soon"]
+            }
+          }
+        }));
+      }
+    `);
+
+    const result = await runMonitor(`null-deadline-monitor-${process.pid}-${Date.now()}`, 600);
+    const notices = result.stdout
+      .split("\n")
+      .filter((line) => line.includes("[HeadsDown] Window closing"));
+
+    expect(notices).toHaveLength(1);
+    expect(notices[0]).toContain("Remaining minutes: 6");
+    expect(notices[0]).toContain("Hints: wrap soon");
+  });
+
+  it("stays quiet when status says attention-window guidance is suppressed", async () => {
+    await writeCliStub(`
+      if (process.argv[2] === "status") {
+        console.log(JSON.stringify({
+          attentionWindowClosing: false,
+          headsdownCall: { key: "attention_window_closing" },
+          effectiveAttentionWindow: null,
+          availability: {
+            wrapUpGuidance: {
+              active: true,
+              selectedMode: "full_depth",
+              source: "forced_full_depth",
+              deadlineAt: "2026-04-29T18:00:00Z",
+              thresholdMinutes: 30,
+              remainingMinutes: 6,
+              hints: ["full depth active"]
+            }
+          }
+        }));
+      }
+    `);
+
+    const result = await runMonitor(`suppressed-window-monitor-${process.pid}-${Date.now()}`, 120);
+
+    expect(result.stdout).not.toContain("[HeadsDown] Window closing");
+    expect(result.stdout).not.toContain("[HeadsDown] Box deadline near");
   });
 
   it("uses the effective time-box deadline when it drives the warning", async () => {

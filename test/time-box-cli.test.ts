@@ -67,15 +67,39 @@ describe("time-box CLI", () => {
     expect(result.stderr).toContain("Use a duration like 30m, 45m, 1h, or 1h30m.");
   });
 
-  it("returns a sanitized category when report-progress is unavailable", async () => {
-    const result = await runCli(["report-progress", "write", "1"], {
-      ...process.env,
-      HOME: tempDir,
-      HEADSDOWN_API_KEY: "",
-      HEADSDOWN_CREDENTIALS_PATH: join(tempDir, "missing-credentials.json"),
-      HEADSDOWN_AGENT_RUN_STATE_PATH: join(tempDir, "missing-run-state.json"),
-      HEADSDOWN_TIME_BOX_PATH: join(tempDir, "report-progress-box.json"),
+  it("returns local status and time-box guidance when full status is unavailable", async () => {
+    const env = unavailableHeadsDownEnv("status-local-box");
+    await runCli(["time-box", "set", "1m"], env);
+
+    const result = await runCli(["status"], env);
+    const payload = JSON.parse(result.stdout);
+
+    expect(result.code).toBe(0);
+    expect(payload.availabilityError).toContain("HeadsDown authentication is unavailable");
+    expect(payload.timeBox.active).toBe(true);
+    expect(payload.effectiveAttentionWindow).toMatchObject({
+      source: "time_box",
+      thresholdMinutes: 1,
     });
+  });
+
+  it("passes through local box state errors from full status", async () => {
+    const env = unavailableHeadsDownEnv("status-corrupt-box");
+    await writeFile(env.HEADSDOWN_TIME_BOX_PATH!, "not-json");
+
+    const result = await runCli(["status"], env);
+    const payload = JSON.parse(result.stdout);
+
+    expect(result.code).toBe(0);
+    expect(payload.timeBoxError).toContain("Invalid HeadsDown box");
+    expect(payload.availabilityError).toContain("HeadsDown authentication is unavailable");
+  });
+
+  it("returns local time-box guidance when report-progress is unavailable", async () => {
+    const env = unavailableHeadsDownEnv("report-progress-local-box");
+    await runCli(["time-box", "set", "1m"], env);
+
+    const result = await runCli(["report-progress", "write", "1"], env);
 
     expect(result.code).toBe(0);
     expect(JSON.parse(result.stdout)).toMatchObject({
@@ -83,7 +107,30 @@ describe("time-box CLI", () => {
       reason: "unavailable",
       errorCategory: "auth",
       message:
-        "HeadsDown authentication is unavailable. Run /headsdown:login before relying on progress reporting.",
+        "HeadsDown authentication is unavailable. Run /headsdown auth before relying on progress reporting.",
+      attentionWindowClosing: true,
+      attentionWindow: {
+        source: "time_box",
+        thresholdMinutes: 1,
+      },
+    });
+  });
+
+  it("returns a sanitized category when report-progress is unavailable", async () => {
+    const result = await runCli(
+      ["report-progress", "write", "1"],
+      unavailableHeadsDownEnv("missing-auth"),
+    );
+
+    expect(result.code).toBe(0);
+    expect(JSON.parse(result.stdout)).toMatchObject({
+      reported: false,
+      reason: "unavailable",
+      errorCategory: "auth",
+      message:
+        "HeadsDown authentication is unavailable. Run /headsdown auth before relying on progress reporting.",
+      attentionWindowClosing: false,
+      attentionWindow: null,
     });
   });
 });
@@ -93,6 +140,16 @@ function timeBoxEnv(sessionId: string): NodeJS.ProcessEnv {
     ...process.env,
     CLAUDE_SESSION_ID: sessionId,
     HEADSDOWN_TIME_BOX_PATH: join(tempDir, `${sessionId}.json`),
+  };
+}
+
+function unavailableHeadsDownEnv(sessionId: string): NodeJS.ProcessEnv {
+  return {
+    ...timeBoxEnv(sessionId),
+    HOME: tempDir,
+    HEADSDOWN_API_KEY: "",
+    HEADSDOWN_CREDENTIALS_PATH: join(tempDir, "missing-credentials.json"),
+    HEADSDOWN_AGENT_RUN_STATE_PATH: join(tempDir, "missing-run-state.json"),
   };
 }
 

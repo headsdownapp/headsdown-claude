@@ -103,6 +103,20 @@ append_context() {
   fi
 }
 
+append_additional_context() {
+  local value="$1"
+
+  if [ -z "$value" ]; then
+    return
+  fi
+
+  if [ -n "$additional_context" ]; then
+    additional_context="$additional_context $value"
+  else
+    additional_context="$value"
+  fi
+}
+
 if [ -n "$progress_json" ] && [ "$progress_json" != "null" ]; then
   attention_window_closing=$(echo "$progress_json" | jq -r '.attentionWindowClosing // false' 2>/dev/null || echo "false")
   run_id=$(echo "$progress_json" | jq -r '.runId // empty' 2>/dev/null || echo "")
@@ -170,11 +184,7 @@ fi
 
 if [ -n "$progress_time_box_error" ]; then
   time_box_error_context="HeadsDown box state warning: ${progress_time_box_error}. Use /headsdown:box clear to clear local box state or /headsdown:box <duration> to replace it."
-  if [ -n "$additional_context" ]; then
-    additional_context="$additional_context $time_box_error_context"
-  else
-    additional_context="$time_box_error_context"
-  fi
+  append_additional_context "$time_box_error_context"
   if [ "$TOOL_TYPE" = "write" ]; then
     message="$message HeadsDown box state could not be read. Use /headsdown:box clear or /headsdown:box <duration> to replace it."
   fi
@@ -182,29 +192,17 @@ fi
 
 if [ -n "$progress_availability_error" ]; then
   availability_error_context="HeadsDown availability warning: ${progress_availability_error} Attention-window guidance may be incomplete until the next successful status check."
-  if [ -n "$additional_context" ]; then
-    additional_context="$additional_context $availability_error_context"
-  else
-    additional_context="$availability_error_context"
-  fi
+  append_additional_context "$availability_error_context"
 fi
 
 if [ -n "$progress_report_error" ]; then
   progress_report_error_context="HeadsDown progress telemetry warning: ${progress_report_error} Attention-window guidance is still available, but progress telemetry may be stale."
-  if [ -n "$additional_context" ]; then
-    additional_context="$additional_context $progress_report_error_context"
-  else
-    additional_context="$progress_report_error_context"
-  fi
+  append_additional_context "$progress_report_error_context"
 fi
 
 if [ -n "$progress_command_error" ]; then
   progress_command_error_context="HeadsDown progress command warning: ${progress_command_error} Attention-window guidance may be incomplete until the command succeeds."
-  if [ -n "$additional_context" ]; then
-    additional_context="$additional_context $progress_command_error_context"
-  else
-    additional_context="$progress_command_error_context"
-  fi
+  append_additional_context "$progress_command_error_context"
 fi
 
 if [ "$progress_reported" = "false" ]; then
@@ -212,11 +210,7 @@ if [ "$progress_reported" = "false" ]; then
   if [ -n "$progress_error_details" ]; then
     progress_error_context="$progress_error_context Details: ${progress_error_details}."
   fi
-  if [ -n "$additional_context" ]; then
-    additional_context="$additional_context $progress_error_context"
-  else
-    additional_context="$progress_error_context"
-  fi
+  append_additional_context "$progress_error_context"
 fi
 
 if [ "$TOOL_TYPE" = "write" ]; then

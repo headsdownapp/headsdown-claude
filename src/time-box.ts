@@ -18,10 +18,13 @@ export interface TimeBoxStatus {
 }
 
 export interface AttentionWindowInput {
+  active?: boolean | null;
   deadlineAt?: string | null;
   thresholdMinutes?: number | null;
   remainingMinutes?: number | null;
   hints?: string[] | null;
+  selectedMode?: string | null;
+  source?: string | null;
 }
 
 export interface EffectiveAttentionWindow {
@@ -30,6 +33,8 @@ export interface EffectiveAttentionWindow {
   remainingMinutes: number | null;
   hints: string[];
   source: "backend" | "time_box";
+  selectedMode?: string | null;
+  backendSource?: string | null;
 }
 
 const DEFAULT_TIME_BOX_THRESHOLD_MINUTES = 15;
@@ -61,11 +66,15 @@ export function createTimeBox(input: {
 }): TimeBoxState {
   const now = input.now ?? new Date();
   const durationMinutes = parseTimeBoxDuration(input.durationText);
+  const sessionIdHash = input.sessionIdHash.trim();
+  if (!sessionIdHash) {
+    throw new Error("HeadsDown box requires a session id.");
+  }
   const expiresAt = new Date(now.getTime() + durationMinutes * 60_000);
 
   return {
     schemaVersion: 1,
-    sessionIdHash: input.sessionIdHash,
+    sessionIdHash,
     durationMinutes,
     createdAt: now.toISOString(),
     expiresAt: expiresAt.toISOString(),
@@ -134,7 +143,10 @@ export function resolveEffectiveAttentionWindow(input: {
   forceTimeBoxWarning?: boolean;
 }): EffectiveAttentionWindow | null {
   const now = input.now ?? new Date();
-  const backend = normalizeBackendWindow(input.backend ?? null);
+  const backendInput = input.backend ?? null;
+  if (isFullDepthSuppressedBackendWindow(backendInput)) return null;
+
+  const backend = normalizeBackendWindow(backendInput);
   const timeBox = input.timeBox ?? null;
   const timeBoxWindow = timeBox ? normalizeTimeBoxWindow(timeBox, now) : null;
 
@@ -177,7 +189,7 @@ function isTimeBoxEarlierOrEqual(
 function normalizeBackendWindow(
   input: AttentionWindowInput | null,
 ): EffectiveAttentionWindow | null {
-  if (!input) return null;
+  if (!input || input.active === false) return null;
 
   const deadlineAt = normalizeIsoTimestamp(input.deadlineAt);
   const thresholdMinutes = normalizeNonNegativeFiniteNumber(input.thresholdMinutes);
@@ -188,13 +200,26 @@ function normalizeBackendWindow(
     return null;
   }
 
+  const selectedMode = normalizeText(input.selectedMode);
+  const backendSource = normalizeText(input.source);
+
   return {
     deadlineAt,
     thresholdMinutes,
     remainingMinutes,
     hints,
     source: "backend",
+    ...(selectedMode ? { selectedMode } : {}),
+    ...(backendSource ? { backendSource } : {}),
   };
+}
+
+function isFullDepthSuppressedBackendWindow(input: AttentionWindowInput | null): boolean {
+  if (!input) return false;
+  return (
+    normalizeText(input.selectedMode) === "full_depth" ||
+    normalizeText(input.source) === "forced_full_depth"
+  );
 }
 
 function normalizeTimeBoxWindow(state: TimeBoxState, now: Date): EffectiveAttentionWindow | null {
@@ -237,6 +262,12 @@ function normalizeHints(values: string[] | null | undefined): string[] {
   return Array.isArray(values)
     ? values.map((value) => (typeof value === "string" ? value.trim() : "")).filter(Boolean)
     : [];
+}
+
+function normalizeText(value: string | null | undefined): string | null {
+  if (typeof value !== "string") return null;
+  const trimmed = value.trim().toLowerCase();
+  return trimmed.length > 0 ? trimmed : null;
 }
 
 function mergeHints(first: string[], second: string[]): string[] {

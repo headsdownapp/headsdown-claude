@@ -6,14 +6,14 @@ argument-hint: "[duration like 30m, 45m, 1h, 1h30m | status | clear]"
 
 # HeadsDown Box
 
-A box is a session-scoped local deadline for the current Claude Code run. It tightens HeadsDown attention-window warnings earlier than the backend-derived deadline, but it never stops Claude automatically.
+A box is a session-scoped local deadline for the current Claude Code run. When earlier than the backend-derived deadline, it tightens HeadsDown attention-window warnings, but it never stops Claude automatically.
 
 ## Instructions
 
 Read `$ARGUMENTS` and dispatch to the local CLI:
 
 - If the argument is empty or `status`, run `node ${CLAUDE_PLUGIN_ROOT}/dist/cli.js time-box status` and show whether a box is active, the current deadline, remaining minutes, and warning threshold.
-- If the argument is `clear`, run `node ${CLAUDE_PLUGIN_ROOT}/dist/cli.js time-box clear` and confirm backend-derived attention-window behavior is active again.
+- If the argument is `clear`, run `node ${CLAUDE_PLUGIN_ROOT}/dist/cli.js time-box clear` and confirm future warnings will use backend-derived attention-window behavior when available.
 - Otherwise, treat the argument as a duration and run `node ${CLAUDE_PLUGIN_ROOT}/dist/cli.js time-box set "$ARGUMENTS"`.
 
 Example duration forms include `30m`, `45m`, `1h`, and `1h30m`.

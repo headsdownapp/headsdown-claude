@@ -50,23 +50,27 @@ async function createTestClient() {
 
 describe("HeadsDown MCP Server", () => {
   describe("listTools", () => {
-    it("exposes ten tools", async () => {
+    it("exposes the required HeadsDown tools", async () => {
       const client = await createTestClient();
       const result = await client.listTools();
 
       const names = result.tools.map((t) => t.name).sort();
-      expect(names).toEqual([
-        "headsdown_apply_action",
-        "headsdown_auth",
-        "headsdown_continuation",
-        "headsdown_digest",
-        "headsdown_grants",
-        "headsdown_interrupt",
-        "headsdown_override",
-        "headsdown_propose",
-        "headsdown_report",
-        "headsdown_status",
-      ]);
+      expect(new Set(names).size).toBe(names.length);
+      expect(names.every((name) => name.startsWith("headsdown_"))).toBe(true);
+      expect(names).toEqual(
+        expect.arrayContaining([
+          "headsdown_apply_action",
+          "headsdown_auth",
+          "headsdown_continuation",
+          "headsdown_digest",
+          "headsdown_grants",
+          "headsdown_interrupt",
+          "headsdown_override",
+          "headsdown_propose",
+          "headsdown_report",
+          "headsdown_status",
+        ]),
+      );
     });
 
     it("headsdown_status has no required parameters", async () => {

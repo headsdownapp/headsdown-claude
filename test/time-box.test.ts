@@ -157,6 +157,55 @@ describe("effective attention window", () => {
     });
   });
 
+  it("does not surface backend guidance or local box tightening during full-depth override", () => {
+    const timeBox = createTimeBox({
+      durationText: "30m",
+      sessionIdHash: "session-hash",
+      now: new Date("2026-04-29T16:00:00Z"),
+    });
+
+    expect(
+      resolveEffectiveAttentionWindow({
+        backend: {
+          active: true,
+          selectedMode: "full_depth",
+          source: "forced_full_depth",
+          deadlineAt: "2026-04-29T17:00:00Z",
+          thresholdMinutes: 30,
+          remainingMinutes: 10,
+          hints: ["full depth active"],
+        },
+        timeBox,
+        now: new Date("2026-04-29T16:20:00Z"),
+        forceTimeBoxWarning: true,
+      }),
+    ).toBeNull();
+  });
+
+  it("allows local box warnings when backend wrap-up guidance is inactive", () => {
+    const timeBox = createTimeBox({
+      durationText: "30m",
+      sessionIdHash: "session-hash",
+      now: new Date("2026-04-29T16:00:00Z"),
+    });
+
+    expect(
+      resolveEffectiveAttentionWindow({
+        backend: {
+          active: false,
+          selectedMode: "auto",
+          source: "inactive",
+          deadlineAt: "2026-04-29T17:00:00Z",
+          thresholdMinutes: 30,
+          remainingMinutes: 60,
+          hints: ["inactive backend"],
+        },
+        timeBox,
+        now: new Date("2026-04-29T16:20:00Z"),
+      }),
+    ).toMatchObject({ source: "time_box", remainingMinutes: 10 });
+  });
+
   it("does not trigger a standalone box warning until the threshold is reached", () => {
     const timeBox = createTimeBox({
       durationText: "1h",
