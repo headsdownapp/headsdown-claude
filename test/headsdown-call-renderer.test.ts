@@ -18,6 +18,7 @@ describe("renderHeadsDownCall", () => {
         primaryCta: "Queue for later",
       },
       off_the_clock: { title: "Off the clock", primaryCta: "Queue for later" },
+      attention_window_closing: { title: "Window closing", primaryCta: "Extend" },
       ready_to_resume: { title: "Ready to resume", primaryCta: "Resume approved work" },
       needs_your_yes: { title: "Needs your yes", primaryCta: "Review request" },
     };
@@ -30,6 +31,11 @@ describe("renderHeadsDownCall", () => {
       expect(rendered?.title).toBe(expected[key].title);
       expect(rendered?.primaryCta).toBe(expected[key].primaryCta);
       expect(rendered?.summary).toContain(expected[key].title);
+      if (key === "attention_window_closing") {
+        expect(rendered?.body).toBe(
+          "Your attention window is closing. Choose whether to extend or wrap with a summary while context is fresh.",
+        );
+      }
       if (expected[key].primaryCta) {
         expect(rendered?.summary).toContain(`Next move: ${expected[key].primaryCta}.`);
       } else {

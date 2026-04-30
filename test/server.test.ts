@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { mkdtemp, rm, readFile, access } from "node:fs/promises";
+import { mkdtemp, rm, readFile, access, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { HeadsDownClient } from "@headsdown/sdk";
@@ -19,6 +19,7 @@ beforeEach(async () => {
   process.env.HEADSDOWN_CREDENTIALS_PATH = join(tempDir, "missing-credentials.json");
   process.env.HEADSDOWN_ACTION_MARKERS_PATH = join(tempDir, "markers.json");
   process.env.HEADSDOWN_CONTINUATION_PATH = continuationPath;
+  process.env.HEADSDOWN_AGENT_RUN_STATE_PATH = join(tempDir, "agent-run-state.json");
 });
 
 afterEach(async () => {
@@ -26,6 +27,8 @@ afterEach(async () => {
   delete process.env.HEADSDOWN_CREDENTIALS_PATH;
   delete process.env.HEADSDOWN_ACTION_MARKERS_PATH;
   delete process.env.HEADSDOWN_CONTINUATION_PATH;
+  delete process.env.HEADSDOWN_AGENT_RUN_STATE_PATH;
+  delete process.env.CLAUDE_SESSION_ID;
   vi.restoreAllMocks();
 });
 
@@ -102,6 +105,73 @@ describe("HeadsDown MCP Server", () => {
       expect(text).toContain("Not authenticated");
       expect(text).toContain("headsdown_auth");
       expect(result.isError).toBe(true);
+    });
+
+    it("returns current run metadata for command actions", async () => {
+      process.env.CLAUDE_SESSION_ID = "status-session";
+      await writeFile(
+        process.env.HEADSDOWN_AGENT_RUN_STATE_PATH!,
+        JSON.stringify({
+          runs: {
+            "run-window": {
+              runId: "run-window",
+              proposalId: "proposal-window",
+            },
+          },
+          activeRunsBySession: {
+            "status-session": "run-window",
+          },
+        }),
+      );
+
+      const request = vi.fn().mockResolvedValue({
+        agentControlOverview: {
+          headsdownCall: {
+            key: "attention_window_closing",
+            allowedActionKeys: ["allow_for_duration", "pause_and_summarize"],
+          },
+          runSummaries: [
+            {
+              runId: "run-window",
+              callKey: "attention_window_closing",
+              allowedActionKeys: ["allow_for_duration", "pause_and_summarize"],
+            },
+          ],
+        },
+      });
+      const mockClient = {
+        withActor: vi.fn().mockReturnThis(),
+        getAvailability: vi.fn().mockResolvedValue({
+          contract: null,
+          schedule: {
+            inReachableHours: true,
+            activeWindow: null,
+            nextWindow: null,
+            wrapUpGuidance: {
+              deadlineAt: "2026-04-29T18:00:00Z",
+              thresholdMinutes: 30,
+              remainingMinutes: 10,
+              hints: ["wrap soon"],
+            },
+          },
+        }),
+        graphql: { request },
+      } as unknown as HeadsDownClient;
+      vi.spyOn(HeadsDownClient, "fromCredentials").mockResolvedValue(mockClient);
+
+      const client = await createTestClient();
+      const result = await client.callTool({ name: "headsdown_status", arguments: {} });
+      const text = (result.content as Array<{ type: string; text: string }>)[0].text;
+      const payload = JSON.parse(text);
+
+      expect(payload.authenticated).toBe(true);
+      expect(payload.headsdownCall.key).toBe("attention_window_closing");
+      expect(payload.currentRun).toEqual({
+        runId: "run-window",
+        proposalRef: "proposal-window",
+        callKey: "attention_window_closing",
+        allowedActionKeys: ["allow_for_duration", "pause_and_summarize"],
+      });
     });
   });
 
@@ -1519,6 +1589,19 @@ describe("Plugin structure", () => {
       expect(content).toContain("buildReportProgressResponse");
       expect(content).toContain("activeRun");
       expect(content).toContain("overview");
+      expect(content).toContain("wrapUpGuidance");
+    });
+
+    it("refreshes additionalContext during attention-window-closing", async () => {
+      const content = await readFile(scriptPath, "utf-8");
+
+      expect(content).toContain("attentionWindowClosing");
+      expect(content).toContain("additionalContext");
+      expect(content).toContain("/headsdown:extend");
+      expect(content).toContain("/headsdown:wrap");
+      expect(content).toContain(
+        "Do not autonomously call headsdown_apply_action with action_key pause_and_summarize",
+      );
     });
 
     it("uses [HeadsDown] prefix in system messages", async () => {
@@ -1555,13 +1638,48 @@ describe("Plugin structure", () => {
     });
   });
 
+  describe("commands/extend.md and commands/wrap.md", () => {
+    it("define explicit extend and wrap action flows", async () => {
+      const extendPath = join(import.meta.dirname, "..", "commands", "extend.md");
+      const wrapPath = join(import.meta.dirname, "..", "commands", "wrap.md");
+      const extendContent = await readFile(extendPath, "utf-8");
+      const wrapContent = await readFile(wrapPath, "utf-8");
+
+      expect(extendContent).toContain("allow_for_duration");
+      expect(extendContent).toContain("15");
+      expect(extendContent).toContain("$ARGUMENTS");
+      expect(wrapContent).toContain("pause_and_summarize");
+      expect(wrapContent).toContain("privacy-safe handoff");
+      expect(wrapContent).toContain("Only run this action when the user explicitly invokes");
+    });
+  });
+
+  describe("monitors", () => {
+    it("defines an attention-window monitor config and script", async () => {
+      const monitorsPath = join(import.meta.dirname, "..", "monitors", "monitors.json");
+      const scriptPath = join(import.meta.dirname, "..", "monitors", "attention-window-monitor.sh");
+      const raw = await readFile(monitorsPath, "utf-8");
+      const config = JSON.parse(raw);
+      const script = await readFile(scriptPath, "utf-8");
+
+      expect(config.monitors).toBeInstanceOf(Array);
+      expect(config.monitors[0].command).toContain("attention-window-monitor.sh");
+      expect(script).toContain("attention_window_closing");
+      expect(script).toContain("/headsdown:extend");
+      expect(script).toContain("/headsdown:wrap");
+      expect(script).toContain("deadlineAt");
+      expect(script).toContain("thresholdMinutes");
+    });
+  });
+
   describe("plugin.json references hooks", () => {
-    it("manifest points to hooks config", async () => {
+    it("manifest points to hooks config and monitor config", async () => {
       const manifestPath = join(import.meta.dirname, "..", ".claude-plugin", "plugin.json");
       const raw = await readFile(manifestPath, "utf-8");
       const manifest = JSON.parse(raw);
 
       expect(manifest.hooks).toBe("./hooks/hooks.json");
+      expect(manifest.monitors).toBe("./monitors/monitors.json");
     });
   });
 });

@@ -6,6 +6,7 @@ const canonicalCalls = [
   "keep_it_tight",
   "not_worth_starting_now",
   "off_the_clock",
+  "attention_window_closing",
   "ready_to_resume",
   "needs_your_yes",
 ];
@@ -39,6 +40,7 @@ describe("renderHeadsDownCall", () => {
       "keep_it_tight",
       "not_worth_starting_now",
       "off_the_clock",
+      "attention_window_closing",
       "needs_your_yes",
     ]) {
       const rendered = renderHeadsDownCall({
@@ -91,6 +93,25 @@ describe("renderHeadsDownCall", () => {
     expect(rendered.text).toContain("does not recognize");
     expect(rendered.text).toContain("Allowed actions: pause_and_summarize.");
     expect(rendered.text).not.toContain("Pause before this becomes cleanup work.");
+  });
+
+  it("renders attention_window_closing with extend and wrap action guidance", () => {
+    const rendered = renderHeadsDownCall({
+      key: "attention_window_closing",
+      knownKey: "ATTENTION_WINDOW_CLOSING",
+      title: "Window closing",
+      body: "Your attention window is closing. Choose whether to extend or wrap with a summary while context is fresh.",
+      allowedActionKeys: ["allow_for_duration", "pause_and_summarize"],
+      allowedActionKnownKeys: ["ALLOW_FOR_DURATION", "PAUSE_AND_SUMMARIZE"],
+      recommendedActionKnownKey: "ALLOW_FOR_DURATION",
+      reasonCodes: ["window_closing"],
+    });
+
+    expect(rendered.intervention).toBe(true);
+    expect(rendered.title).toBe("Window closing");
+    expect(rendered.text).toContain("Your attention window is closing.");
+    expect(rendered.text).toContain("Allowed actions: allow_for_duration, pause_and_summarize.");
+    expect(rendered.text).not.toContain("Play:");
   });
 
   it("renders off_the_clock with queue_for_morning action guidance", () => {

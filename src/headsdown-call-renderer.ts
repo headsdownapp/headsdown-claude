@@ -1,15 +1,14 @@
 import type { HeadsDownCallPayload } from "./current-headsdown-call.js";
-
-export const CANONICAL_HEADSDOWN_CALL_KEYS = [
-  "good_to_run",
-  "keep_it_tight",
-  "not_worth_starting_now",
-  "off_the_clock",
-  "ready_to_resume",
-  "needs_your_yes",
-] as const;
-
-export type CanonicalHeadsDownCallKey = (typeof CANONICAL_HEADSDOWN_CALL_KEYS)[number];
+import {
+  type CanonicalHeadsDownCallKey,
+  isCanonicalHeadsDownCallKey,
+  isDeprecatedHeadsDownCallKey,
+  normalizeHeadsDownCallKey,
+} from "./headsdown-call-keys.js";
+export {
+  CANONICAL_HEADSDOWN_CALL_KEYS,
+  type CanonicalHeadsDownCallKey,
+} from "./headsdown-call-keys.js";
 
 export type RenderedHeadsDownCall = {
   key: string;
@@ -26,8 +25,6 @@ type HeadsDownCallTemplate = {
   body: string;
   primaryCta: string | null;
 };
-
-const DEPRECATED_HEADSDOWN_CALL_KEYS = new Set(["rabbit_hole_detected", "all_contained"]);
 
 const CALL_TEMPLATES: Record<CanonicalHeadsDownCallKey, HeadsDownCallTemplate> = {
   good_to_run: {
@@ -49,6 +46,11 @@ const CALL_TEMPLATES: Record<CanonicalHeadsDownCallKey, HeadsDownCallTemplate> =
     title: "Off the clock",
     body: "Non-urgent agent decisions wait until the next work window. New asks should queue.",
     primaryCta: "Queue for later",
+  },
+  attention_window_closing: {
+    title: "Window closing",
+    body: "Your attention window is closing. Choose whether to extend or wrap with a summary while context is fresh.",
+    primaryCta: "Extend",
   },
   ready_to_resume: {
     title: "Ready to resume",
@@ -76,8 +78,8 @@ export function renderHeadsDownCall(
     return null;
   }
 
-  const knownKey = isCanonicalCallKey(normalizedKey) ? normalizedKey : null;
-  const deprecated = DEPRECATED_HEADSDOWN_CALL_KEYS.has(normalizedKey);
+  const knownKey = isCanonicalHeadsDownCallKey(normalizedKey) ? normalizedKey : null;
+  const deprecated = isDeprecatedHeadsDownCallKey(normalizedKey);
   const template = knownKey ? CALL_TEMPLATES[knownKey] : UNKNOWN_TEMPLATE;
 
   const title = deprecated ? UNKNOWN_TEMPLATE.title : firstPresent(payload?.title, template.title);
@@ -99,24 +101,8 @@ export function renderHeadsDownCall(
   };
 }
 
-function isCanonicalCallKey(value: string): value is CanonicalHeadsDownCallKey {
-  return CANONICAL_HEADSDOWN_CALL_KEYS.includes(value as CanonicalHeadsDownCallKey);
-}
-
 function normalizeKey(value: string | null): string | null {
-  if (!value) {
-    return null;
-  }
-
-  const trimmed = value.trim();
-  if (!trimmed) {
-    return null;
-  }
-
-  return trimmed
-    .replace(/([a-z\d])([A-Z])/g, "$1_$2")
-    .replace(/[\s\-]+/g, "_")
-    .toLowerCase();
+  return normalizeHeadsDownCallKey(value);
 }
 
 function firstPresent(value: string | null | undefined, fallback: string): string;
