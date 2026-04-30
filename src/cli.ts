@@ -408,11 +408,13 @@ async function reportProgress() {
     await reportRunProgress(actorClient, { toolType, filesModifiedCount });
 
     const overview = await getAgentControlOverviewCompat(actorClient);
+    const { schedule: availability } = await actorClient.getAvailability();
     console.log(
       JSON.stringify(
         buildReportProgressResponse({
           activeRun,
           overview,
+          wrapUpGuidance: availability.wrapUpGuidance ?? null,
         }),
       ),
     );

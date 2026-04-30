@@ -135,6 +135,18 @@ Immediate behavior:
 
 Do not continue open-ended exploration once rabbit-hole intervention is active. Do not call `allow_for_duration` after `pause_and_summarize`; after pause, the run transitions to ready-to-resume semantics.
 
+## Attention Window Closing Flow
+
+When HeadsDown reports `attention_window_closing`, treat it as a user-choice warning, not an autonomous stop.
+
+Immediate behavior:
+
+1. Surface the warning and keep working with wrap-up hints in context.
+2. Do not autonomously call `headsdown_apply_action` with `action_key: "pause_and_summarize"` for this call.
+3. Wrap is user-elected only through `/headsdown:wrap`.
+4. Extend can be applied only when the user explicitly asks, using `/headsdown:extend` (or an explicit instruction) with `action_key: "allow_for_duration"`.
+5. If no action is taken, continue with tighter wrap-up hints as the deadline approaches. Window passing is informational and does not force a stop.
+
 ## Interrupt Evaluation
 
 Before asking the user a **non-critical** clarifying question mid-task, call `headsdown_interrupt`.

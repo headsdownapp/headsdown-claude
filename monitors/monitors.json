@@ -1,0 +1,9 @@
+{
+  "monitors": [
+    {
+      "name": "headsdown-attention-window",
+      "description": "Poll HeadsDown for attention-window-closing calls and emit a notification when a new warning fingerprint appears.",
+      "command": "bash ${CLAUDE_PLUGIN_ROOT}/monitors/attention-window-monitor.sh"
+    }
+  ]
+}

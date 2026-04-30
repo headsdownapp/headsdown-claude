@@ -6,6 +6,7 @@ export const CANONICAL_HEADSDOWN_CALL_KEYS = [
   "not_worth_starting_now",
   "off_the_clock",
   "rabbit_hole_detected",
+  "attention_window_closing",
   "ready_to_resume",
   "all_contained",
   "needs_your_yes",
@@ -54,6 +55,11 @@ const CALL_TEMPLATES: Record<CanonicalHeadsDownCallKey, HeadsDownCallTemplate> =
     title: "Rabbit hole detected",
     body: "Pause before this becomes cleanup work.",
     primaryCta: "Pause + summarize",
+  },
+  attention_window_closing: {
+    title: "Window closing",
+    body: "Your attention window is closing. Choose whether to extend or wrap with a summary while context is fresh.",
+    primaryCta: "Extend",
   },
   ready_to_resume: {
     title: "Ready to resume",

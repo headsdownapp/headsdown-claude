@@ -22,6 +22,7 @@ describe("renderHeadsDownCall", () => {
         title: "Rabbit hole detected",
         primaryCta: "Pause + summarize",
       },
+      attention_window_closing: { title: "Window closing", primaryCta: "Extend" },
       ready_to_resume: { title: "Ready to resume", primaryCta: "Resume approved work" },
       all_contained: { title: "All contained", primaryCta: null },
       needs_your_yes: { title: "Needs your yes", primaryCta: "Review request" },
@@ -37,6 +38,11 @@ describe("renderHeadsDownCall", () => {
       expect(rendered?.summary).toContain(expected[key].title);
       if (key === "rabbit_hole_detected") {
         expect(rendered?.body).toBe("Pause before this becomes cleanup work.");
+      }
+      if (key === "attention_window_closing") {
+        expect(rendered?.body).toBe(
+          "Your attention window is closing. Choose whether to extend or wrap with a summary while context is fresh.",
+        );
       }
       if (expected[key].primaryCta) {
         expect(rendered?.summary).toContain(`Next move: ${expected[key].primaryCta}.`);

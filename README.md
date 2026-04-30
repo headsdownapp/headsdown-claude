@@ -144,13 +144,18 @@ Before Claude writes or edits any file, the hook checks your current mode:
 
 Behavior is controlled by trust level (see [Trust levels](#trust-levels) below).
 
-### PostToolUse Hook (Write/Edit)
+### PostToolUse Hook (All Tools)
 
-After each successful file write or edit, the hook:
+After each tool call, the hook:
 
-- Increments a per-session file modification counter (keyed on `CLAUDE_SESSION_ID`)
-- Emits a system message noting the running count: "[HeadsDown] 4 file(s) modified this session."
+- Increments a per-session file modification counter for write-like tools (keyed on `CLAUDE_SESSION_ID`)
+- Emits a system message for write operations noting the running count: "[HeadsDown] 4 file(s) modified this session."
 - If an approved proposal exists and actual edits exceed the estimated file count by more than 50%, warns Claude to re-evaluate scope and re-propose before continuing
+- Refreshes Claude-visible `additionalContext` while `attention_window_closing` is active so wrap-up hints stay current and action constraints remain explicit (`/headsdown:extend` is user-requested, `/headsdown:wrap` is user-elected)
+
+### Attention Window Monitor
+
+A plugin monitor polls HeadsDown during active runs and emits a notification when a new `attention_window_closing` warning fingerprint appears (deadline + threshold). This enables mid-flow warning visibility even during long stretches between tool boundaries.
 
 ### PreCompact Hook
 
@@ -161,11 +166,13 @@ Before Claude Code compacts the context window, the hook injects a system messag
 
 This allows Claude to include in-progress context in its compaction summary so it can resume the task cleanly after the context is rebuilt. Exits silently if no proposal is active.
 
-### `/headsdown` Command
+### Slash Commands
 
-Quick slash command for direct access:
+Quick slash commands for direct access:
 - `/headsdown` or `/headsdown status` - See your current availability
 - `/headsdown auth` - Authenticate with HeadsDown
+- `/headsdown:extend [minutes]` - Apply `allow_for_duration` to an active window-closing run (defaults to 15)
+- `/headsdown:wrap` - Apply `pause_and_summarize` with a privacy-safe handoff for an active window-closing run
 
 ### `headsdown` Skill
 

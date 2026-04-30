@@ -54,6 +54,7 @@ const CANONICAL_CALL_KEYS = new Set([
   "not_worth_starting_now",
   "off_the_clock",
   "rabbit_hole_detected",
+  "attention_window_closing",
   "ready_to_resume",
   "all_contained",
   "needs_your_yes",
@@ -212,6 +213,7 @@ function escalationText(call: HeadsDownCallView, allowedActionKeys: string[]): s
 function fallbackTitle(call: HeadsDownCallView): string {
   const knownKey = normalizeEnumValue(call.knownKey) ?? canonicalKnownKey(call.key);
   if (knownKey === "rabbit_hole_detected") return "Rabbit hole detected";
+  if (knownKey === "attention_window_closing") return "Window closing";
   if (knownKey === null) return "Needs your yes";
   return humanizeToken(call.key) || "HeadsDown call";
 }
@@ -220,6 +222,10 @@ function fallbackBody(call: HeadsDownCallView): string {
   const knownKey = normalizeEnumValue(call.knownKey) ?? canonicalKnownKey(call.key);
   if (knownKey === "rabbit_hole_detected") {
     return "Pause before this becomes cleanup work.";
+  }
+
+  if (knownKey === "attention_window_closing") {
+    return "Your attention window is closing. Choose whether to extend or wrap with a summary while context is fresh.";
   }
 
   if (knownKey === null) {
