@@ -16,7 +16,10 @@ import { getAgentControlOverviewCompat, renderHeadsDownCall } from "./agent-cont
 import { reportRunOutcome, reportRunProgress } from "./agent-run-events.js";
 import { getActiveRunStateForSession } from "./agent-run-state.js";
 import { LocalActionMarkerStore } from "./headsdown-action-executor.js";
-import { buildReportProgressResponse } from "./report-progress-response.js";
+import {
+  buildReportProgressResponse,
+  resolveCurrentRunContext,
+} from "./report-progress-response.js";
 import type {
   ActorContext,
   Contract,
@@ -63,6 +66,8 @@ async function status() {
   const renderedHeadsDownCall = overview?.headsdownCall
     ? renderHeadsDownCall(overview.headsdownCall)
     : null;
+  const activeRun = await getActiveRunStateForSession();
+  const currentRun = resolveCurrentRunContext({ activeRun, overview });
 
   console.log(
     JSON.stringify(
@@ -71,6 +76,7 @@ async function status() {
         availability,
         headsdownCall: overview?.headsdownCall ?? null,
         renderedHeadsDownCall,
+        currentRun,
         summary: formatSummary(contract, availability, renderedHeadsDownCall?.title),
         wrapUpInstruction: resolveExecutionInstruction({
           contract,
@@ -408,13 +414,20 @@ async function reportProgress() {
     await reportRunProgress(actorClient, { toolType, filesModifiedCount });
 
     const overview = await getAgentControlOverviewCompat(actorClient);
-    const { schedule: availability } = await actorClient.getAvailability();
+    let wrapUpGuidance: ScheduleResolution["wrapUpGuidance"] | null = null;
+    try {
+      const { schedule: availability } = await actorClient.getAvailability();
+      wrapUpGuidance = availability.wrapUpGuidance ?? null;
+    } catch {
+      wrapUpGuidance = null;
+    }
+
     console.log(
       JSON.stringify(
         buildReportProgressResponse({
           activeRun,
           overview,
-          wrapUpGuidance: availability.wrapUpGuidance ?? null,
+          wrapUpGuidance,
         }),
       ),
     );

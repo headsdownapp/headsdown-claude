@@ -1,4 +1,9 @@
 import type { HeadsDownClient } from "@headsdown/sdk";
+import {
+  canonicalHeadsDownCallKey,
+  isDeprecatedHeadsDownCallKey,
+  normalizeHeadsDownCallKey,
+} from "./headsdown-call-keys.js";
 import { getLowLevelGraphQLClient } from "./sdk-compat.js";
 
 export interface HeadsDownCallView {
@@ -48,17 +53,7 @@ export interface RenderedHeadsDownCall {
   allowedActionKeys: string[];
 }
 
-const CANONICAL_CALL_KEYS = new Set([
-  "good_to_run",
-  "keep_it_tight",
-  "not_worth_starting_now",
-  "off_the_clock",
-  "attention_window_closing",
-  "ready_to_resume",
-  "needs_your_yes",
-]);
 const NON_INTERVENTION_KEYS = new Set(["good_to_run", "ready_to_resume"]);
-const DEPRECATED_CALL_KEYS = new Set(["rabbit_hole_detected", "all_contained"]);
 
 export const AGENT_CONTROL_OVERVIEW_QUERY = `
   query AgentControlOverviewForClaudeRendering {
@@ -200,19 +195,15 @@ function normalizeActionKey(value: string | null | undefined): string | null {
 }
 
 function canonicalKnownKey(value: string | null | undefined): string | null {
-  const key = normalizeEnumValue(value);
-  return key && CANONICAL_CALL_KEYS.has(key) ? key : null;
+  return canonicalHeadsDownCallKey(value);
 }
 
 function isDeprecatedCallKey(value: string | null | undefined): boolean {
-  const key = normalizeEnumValue(value);
-  return key !== null && DEPRECATED_CALL_KEYS.has(key);
+  return isDeprecatedHeadsDownCallKey(value);
 }
 
 function normalizeEnumValue(value: string | null | undefined): string | null {
-  const cleaned = cleanText(value);
-  if (!cleaned) return null;
-  return cleaned.toLowerCase().replace(/-/g, "_");
+  return normalizeHeadsDownCallKey(value);
 }
 
 function humanizeToken(value: string | null | undefined): string {

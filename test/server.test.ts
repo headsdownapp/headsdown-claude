@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { mkdtemp, rm, readFile, access } from "node:fs/promises";
+import { mkdtemp, rm, readFile, access, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { HeadsDownClient } from "@headsdown/sdk";
@@ -19,6 +19,7 @@ beforeEach(async () => {
   process.env.HEADSDOWN_CREDENTIALS_PATH = join(tempDir, "missing-credentials.json");
   process.env.HEADSDOWN_ACTION_MARKERS_PATH = join(tempDir, "markers.json");
   process.env.HEADSDOWN_CONTINUATION_PATH = continuationPath;
+  process.env.HEADSDOWN_AGENT_RUN_STATE_PATH = join(tempDir, "agent-run-state.json");
 });
 
 afterEach(async () => {
@@ -26,6 +27,8 @@ afterEach(async () => {
   delete process.env.HEADSDOWN_CREDENTIALS_PATH;
   delete process.env.HEADSDOWN_ACTION_MARKERS_PATH;
   delete process.env.HEADSDOWN_CONTINUATION_PATH;
+  delete process.env.HEADSDOWN_AGENT_RUN_STATE_PATH;
+  delete process.env.CLAUDE_SESSION_ID;
   vi.restoreAllMocks();
 });
 
@@ -102,6 +105,73 @@ describe("HeadsDown MCP Server", () => {
       expect(text).toContain("Not authenticated");
       expect(text).toContain("headsdown_auth");
       expect(result.isError).toBe(true);
+    });
+
+    it("returns current run metadata for command actions", async () => {
+      process.env.CLAUDE_SESSION_ID = "status-session";
+      await writeFile(
+        process.env.HEADSDOWN_AGENT_RUN_STATE_PATH!,
+        JSON.stringify({
+          runs: {
+            "run-window": {
+              runId: "run-window",
+              proposalId: "proposal-window",
+            },
+          },
+          activeRunsBySession: {
+            "status-session": "run-window",
+          },
+        }),
+      );
+
+      const request = vi.fn().mockResolvedValue({
+        agentControlOverview: {
+          headsdownCall: {
+            key: "attention_window_closing",
+            allowedActionKeys: ["allow_for_duration", "pause_and_summarize"],
+          },
+          runSummaries: [
+            {
+              runId: "run-window",
+              callKey: "attention_window_closing",
+              allowedActionKeys: ["allow_for_duration", "pause_and_summarize"],
+            },
+          ],
+        },
+      });
+      const mockClient = {
+        withActor: vi.fn().mockReturnThis(),
+        getAvailability: vi.fn().mockResolvedValue({
+          contract: null,
+          schedule: {
+            inReachableHours: true,
+            activeWindow: null,
+            nextWindow: null,
+            wrapUpGuidance: {
+              deadlineAt: "2026-04-29T18:00:00Z",
+              thresholdMinutes: 30,
+              remainingMinutes: 10,
+              hints: ["wrap soon"],
+            },
+          },
+        }),
+        graphql: { request },
+      } as unknown as HeadsDownClient;
+      vi.spyOn(HeadsDownClient, "fromCredentials").mockResolvedValue(mockClient);
+
+      const client = await createTestClient();
+      const result = await client.callTool({ name: "headsdown_status", arguments: {} });
+      const text = (result.content as Array<{ type: string; text: string }>)[0].text;
+      const payload = JSON.parse(text);
+
+      expect(payload.authenticated).toBe(true);
+      expect(payload.headsdownCall.key).toBe("attention_window_closing");
+      expect(payload.currentRun).toEqual({
+        runId: "run-window",
+        proposalRef: "proposal-window",
+        callKey: "attention_window_closing",
+        allowedActionKeys: ["allow_for_duration", "pause_and_summarize"],
+      });
     });
   });
 

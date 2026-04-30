@@ -75,6 +75,15 @@ run_id=""
 allow_duration_supported="false"
 wrap_supported="false"
 
+append_context() {
+  local label="$1"
+  local value="$2"
+
+  if [ -n "$value" ]; then
+    attention_context="$attention_context ${label}: ${value}."
+  fi
+}
+
 if [ -n "$progress_json" ] && [ "$progress_json" != "null" ]; then
   attention_window_closing=$(echo "$progress_json" | jq -r '.attentionWindowClosing // false' 2>/dev/null || echo "false")
   run_id=$(echo "$progress_json" | jq -r '.runId // empty' 2>/dev/null || echo "")
@@ -104,26 +113,14 @@ if [ "$attention_window_closing" = "true" ]; then
     attention_context="$attention_context Extend action is currently allowed."
   fi
 
-  if [ -n "$deadline_at" ]; then
-    attention_context="$attention_context Deadline: ${deadline_at}."
-  fi
-
-  if [ -n "$remaining_minutes" ]; then
-    attention_context="$attention_context Remaining minutes: ${remaining_minutes}."
-  fi
-
-  if [ -n "$threshold_minutes" ]; then
-    attention_context="$attention_context Warning threshold minutes: ${threshold_minutes}."
-  fi
-
-  if [ -n "$hints_text" ]; then
-    attention_context="$attention_context Current wrap-up hints: ${hints_text}."
-  fi
+  append_context "Deadline" "$deadline_at"
+  append_context "Remaining minutes" "$remaining_minutes"
+  append_context "Warning threshold minutes" "$threshold_minutes"
+  append_context "Current wrap-up hints" "$hints_text"
 
   additional_context="$attention_context"
 
   if [ "$TOOL_TYPE" = "write" ]; then
-    emit_system_message="true"
     message="$message Window closing is active. Use /headsdown:extend to request more time or /headsdown:wrap to pause and summarize."
   fi
 fi

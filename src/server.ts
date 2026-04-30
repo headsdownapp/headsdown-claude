@@ -23,6 +23,7 @@ import {
   APPLY_HEADSDOWN_ACTION_MUTATION,
   LocalActionMarkerStore,
 } from "./headsdown-action-executor.js";
+import { resolveCurrentRunContext } from "./report-progress-response.js";
 import { getLowLevelGraphQLClient } from "./sdk-compat.js";
 import type {
   ActorContext,
@@ -547,6 +548,8 @@ async function handleStatus() {
   const renderedHeadsDownCall = overview?.headsdownCall
     ? renderHeadsDownCall(overview.headsdownCall)
     : null;
+  const activeRun = await getActiveRunStateForSession();
+  const currentRun = resolveCurrentRunContext({ activeRun, overview });
 
   return textResult(
     JSON.stringify(
@@ -568,6 +571,7 @@ async function handleStatus() {
         availability,
         headsdownCall: overview?.headsdownCall ?? null,
         renderedHeadsDownCall,
+        currentRun,
         summary: formatAvailabilitySummary(contract, availability, renderedHeadsDownCall?.title),
         wrapUpInstruction,
       },

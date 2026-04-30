@@ -127,11 +127,46 @@ describe("buildReportProgressResponse", () => {
     expect(response.allowedActionKeys).toEqual(["pause_and_summarize", "allow_for_duration"]);
   });
 
-  it("returns empty action context when there are no run summaries", () => {
+  it("falls back to overview call state when the active run summary is missing", () => {
+    const response = buildReportProgressResponse({
+      activeRun: { runId: "run-404", proposalId: "proposal-404" },
+      overview: {
+        headsdownCall: {
+          key: "attention_window_closing",
+          allowedActionKeys: ["pause_and_summarize", "allow_for_duration", "pause_and_summarize"],
+        },
+        runSummaries: [
+          { runId: "run-other", callKey: "keep_it_tight", allowedActionKeys: ["narrow_scope"] },
+        ],
+      },
+      wrapUpGuidance: {
+        deadlineAt: "2026-04-29T18:00:00Z",
+        thresholdMinutes: 30,
+        remainingMinutes: 8,
+        hints: ["handoff soon"],
+      },
+    });
+
+    expect(response).toEqual({
+      reported: true,
+      runId: "run-404",
+      proposalRef: "proposal-404",
+      attentionWindowClosing: true,
+      attentionWindow: {
+        deadlineAt: "2026-04-29T18:00:00Z",
+        thresholdMinutes: 30,
+        remainingMinutes: 8,
+        hints: ["handoff soon"],
+      },
+      allowedActionKeys: ["pause_and_summarize", "allow_for_duration"],
+    });
+  });
+
+  it("uses overview call actions when there are no run summaries", () => {
     const response = buildReportProgressResponse({
       activeRun: null,
       overview: {
-        headsdownCall: { key: "good_to_run" },
+        headsdownCall: { key: "good_to_run", allowedActionKeys: ["narrow_scope", "ask_user"] },
         runSummaries: null,
       },
     });
@@ -142,7 +177,31 @@ describe("buildReportProgressResponse", () => {
       proposalRef: null,
       attentionWindowClosing: false,
       attentionWindow: null,
-      allowedActionKeys: [],
+      allowedActionKeys: ["narrow_scope", "ask_user"],
+    });
+  });
+
+  it("drops invalid attention window values instead of leaking nonsense countdown data", () => {
+    const response = buildReportProgressResponse({
+      activeRun: null,
+      overview: {
+        headsdownCall: { key: "attention_window_closing" },
+        runSummaries: null,
+      },
+      wrapUpGuidance: {
+        deadlineAt: "not a timestamp",
+        thresholdMinutes: Number.NaN,
+        remainingMinutes: -1,
+        hints: [" keep ", ""],
+      },
+    });
+
+    expect(response.attentionWindowClosing).toBe(true);
+    expect(response.attentionWindow).toEqual({
+      deadlineAt: null,
+      thresholdMinutes: null,
+      remainingMinutes: null,
+      hints: ["keep"],
     });
   });
 });

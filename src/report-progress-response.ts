@@ -1,4 +1,5 @@
 import type { AgentControlOverviewView, AgentRunSummaryView } from "./agent-control.js";
+import { normalizeHeadsDownCallKey } from "./headsdown-call-keys.js";
 
 export interface ActiveRunRef {
   runId: string;
@@ -12,14 +13,31 @@ export interface AttentionWindowState {
   hints: string[];
 }
 
-export interface ReportProgressResponse {
-  reported: boolean;
+export interface CurrentRunContext {
   runId: string | null;
   proposalRef: string | null;
-  attentionWindowClosing: boolean;
-  attentionWindow: AttentionWindowState | null;
+  callKey: string | null;
   allowedActionKeys: string[];
 }
+
+interface BaseReportProgressResponse {
+  reported: true;
+  runId: string | null;
+  proposalRef: string | null;
+  allowedActionKeys: string[];
+}
+
+export type ReportProgressResponse = BaseReportProgressResponse &
+  (
+    | {
+        attentionWindowClosing: true;
+        attentionWindow: AttentionWindowState;
+      }
+    | {
+        attentionWindowClosing: false;
+        attentionWindow: null;
+      }
+  );
 
 export function buildReportProgressResponse(input: {
   activeRun: ActiveRunRef | null;
@@ -31,18 +49,52 @@ export function buildReportProgressResponse(input: {
     hints?: string[] | null;
   } | null;
 }): ReportProgressResponse {
-  const currentRun = resolveCurrentRun(input.activeRun, input.overview?.runSummaries ?? null);
-  const callKey = normalizeEnumValue(currentRun?.callKey);
-  const attentionWindowClosing = callKey === "attention_window_closing";
-  const allowedActionKeys = normalizeActionKeys(currentRun?.allowedActionKeys ?? []);
+  const currentRun = resolveCurrentRunContext({
+    activeRun: input.activeRun,
+    overview: input.overview,
+  });
+  const base = {
+    reported: true,
+    runId: currentRun.runId,
+    proposalRef: currentRun.proposalRef,
+    allowedActionKeys: currentRun.allowedActionKeys,
+  } satisfies BaseReportProgressResponse;
+
+  if (currentRun.callKey === "attention_window_closing") {
+    return {
+      ...base,
+      attentionWindowClosing: true,
+      attentionWindow: buildAttentionWindowState(input.wrapUpGuidance ?? null),
+    };
+  }
 
   return {
-    reported: true,
+    ...base,
+    attentionWindowClosing: false,
+    attentionWindow: null,
+  };
+}
+
+export function resolveCurrentRunContext(input: {
+  activeRun: ActiveRunRef | null;
+  overview: AgentControlOverviewView | null;
+}): CurrentRunContext {
+  const currentRun = resolveCurrentRun(input.activeRun, input.overview?.runSummaries ?? null);
+  const overviewCall = input.overview?.headsdownCall ?? null;
+  const callKey =
+    normalizeHeadsDownCallKey(currentRun?.callKey) ?? resolveOverviewCallKey(overviewCall);
+  const summaryActionKeys = normalizeActionKeys(currentRun?.allowedActionKeys ?? []);
+  const overviewActionKeys = normalizeActionKeys(
+    overviewCall?.allowedActionKeys && overviewCall.allowedActionKeys.length > 0
+      ? overviewCall.allowedActionKeys
+      : overviewCall?.allowedActionKnownKeys,
+  );
+
+  return {
     runId: currentRun?.runId ?? input.activeRun?.runId ?? null,
     proposalRef: input.activeRun?.proposalId ?? null,
-    attentionWindowClosing,
-    attentionWindow: attentionWindowClosing ? buildAttentionWindowState(input.wrapUpGuidance ?? null) : null,
-    allowedActionKeys,
+    callKey,
+    allowedActionKeys: summaryActionKeys.length > 0 ? summaryActionKeys : overviewActionKeys,
   };
 }
 
@@ -61,11 +113,17 @@ function resolveCurrentRun(
   }
 
   const attentionWindowRuns = runSummaries.filter(
-    (run) => normalizeEnumValue(run.callKey) === "attention_window_closing",
+    (run) => normalizeHeadsDownCallKey(run.callKey) === "attention_window_closing",
   );
   if (attentionWindowRuns.length === 1) return attentionWindowRuns[0];
 
   return runSummaries[0] ?? null;
+}
+
+function resolveOverviewCallKey(
+  call: AgentControlOverviewView["headsdownCall"] | null,
+): string | null {
+  return normalizeHeadsDownCallKey(call?.knownKey) ?? normalizeHeadsDownCallKey(call?.key);
 }
 
 function buildAttentionWindowState(
@@ -77,12 +135,9 @@ function buildAttentionWindowState(
   } | null,
 ): AttentionWindowState {
   return {
-    deadlineAt:
-      typeof input?.deadlineAt === "string" && input.deadlineAt.trim()
-        ? input.deadlineAt.trim()
-        : null,
-    thresholdMinutes: typeof input?.thresholdMinutes === "number" ? input.thresholdMinutes : null,
-    remainingMinutes: typeof input?.remainingMinutes === "number" ? input.remainingMinutes : null,
+    deadlineAt: normalizeIsoTimestamp(input?.deadlineAt),
+    thresholdMinutes: normalizeNonNegativeFiniteNumber(input?.thresholdMinutes),
+    remainingMinutes: normalizeNonNegativeFiniteNumber(input?.remainingMinutes),
     hints: Array.isArray(input?.hints)
       ? input.hints
           .map((hint) => (typeof hint === "string" ? hint.trim() : ""))
@@ -91,19 +146,27 @@ function buildAttentionWindowState(
   };
 }
 
+function normalizeNonNegativeFiniteNumber(value: number | null | undefined): number | null {
+  return typeof value === "number" && Number.isFinite(value) && value >= 0 ? value : null;
+}
+
+function normalizeIsoTimestamp(value: string | null | undefined): string | null {
+  if (typeof value !== "string") return null;
+
+  const trimmed = value.trim();
+  if (!trimmed) return null;
+
+  return Number.isNaN(Date.parse(trimmed)) ? null : trimmed;
+}
+
 function normalizeActionKeys(values: string[] | null | undefined): string[] {
   if (!values || values.length === 0) return [];
 
   return [
     ...new Set(
-      values.map((value) => normalizeEnumValue(value)).filter((value): value is string => !!value),
+      values
+        .map((value) => normalizeHeadsDownCallKey(value))
+        .filter((value): value is string => !!value),
     ),
   ];
-}
-
-function normalizeEnumValue(value: string | null | undefined): string | null {
-  if (typeof value !== "string") return null;
-  const trimmed = value.trim();
-  if (!trimmed) return null;
-  return trimmed.toLowerCase().replace(/-/g, "_");
 }
