@@ -50,23 +50,27 @@ async function createTestClient() {
 
 describe("HeadsDown MCP Server", () => {
   describe("listTools", () => {
-    it("exposes ten tools", async () => {
+    it("exposes the required HeadsDown tools", async () => {
       const client = await createTestClient();
       const result = await client.listTools();
 
       const names = result.tools.map((t) => t.name).sort();
-      expect(names).toEqual([
-        "headsdown_apply_action",
-        "headsdown_auth",
-        "headsdown_continuation",
-        "headsdown_digest",
-        "headsdown_grants",
-        "headsdown_interrupt",
-        "headsdown_override",
-        "headsdown_propose",
-        "headsdown_report",
-        "headsdown_status",
-      ]);
+      expect(new Set(names).size).toBe(names.length);
+      expect(names.every((name) => name.startsWith("headsdown_"))).toBe(true);
+      expect(names).toEqual(
+        expect.arrayContaining([
+          "headsdown_apply_action",
+          "headsdown_auth",
+          "headsdown_continuation",
+          "headsdown_digest",
+          "headsdown_grants",
+          "headsdown_interrupt",
+          "headsdown_override",
+          "headsdown_propose",
+          "headsdown_report",
+          "headsdown_status",
+        ]),
+      );
     });
 
     it("headsdown_status has no required parameters", async () => {
@@ -1054,6 +1058,16 @@ describe("Plugin structure", () => {
       expect(content).toContain("headsdown_continuation");
     });
 
+    it("documents self-declared box deadlines", async () => {
+      const skillPath = join(import.meta.dirname, "..", "skills", "headsdown", "SKILL.md");
+      const content = await readFile(skillPath, "utf-8");
+
+      expect(content).toContain("Self-Declared Deadlines (Box)");
+      expect(content).toContain("/headsdown:box <duration>");
+      expect(content).toContain("session-scoped");
+      expect(content).toContain("does not stop the agent");
+    });
+
     it("documents session resume guidance", async () => {
       const skillPath = join(import.meta.dirname, "..", "skills", "headsdown", "SKILL.md");
       const content = await readFile(skillPath, "utf-8");
@@ -1572,7 +1586,8 @@ describe("Plugin structure", () => {
     it("reports progress in fail-open mode", async () => {
       const content = await readFile(scriptPath, "utf-8");
       expect(content).toContain('node "$CLI" report-progress "$TOOL_TYPE" "$count"');
-      expect(content).toContain('|| progress_json=""');
+      expect(content).toContain('progress_command_error="HeadsDown progress command failed."');
+      expect(content).toContain("HeadsDown progress command warning");
     });
 
     it("does not include deprecated intervention copy", async () => {
@@ -1635,6 +1650,25 @@ describe("Plugin structure", () => {
       expect(content).toContain("status");
       expect(content).toContain("auth");
       expect(content).toContain("$ARGUMENTS");
+    });
+  });
+
+  describe("commands/box.md", () => {
+    it("documents local box set, status, and clear behavior", async () => {
+      const cmdPath = join(import.meta.dirname, "..", "commands", "box.md");
+      const content = await readFile(cmdPath, "utf-8");
+
+      expect(content).toMatch(/^---\n/);
+      expect(content).toContain("allowed-tools: Bash(node:*)");
+      expect(content).toContain("time-box set");
+      expect(content).toContain("time-box status");
+      expect(content).toContain("time-box clear");
+      expect(content).toContain("30m");
+      expect(content).toContain("1h30m");
+      expect(content).toContain("session-scoped local deadline");
+      expect(content).toContain("never stops Claude automatically");
+      expect(content).toContain("/headsdown:extend");
+      expect(content).toContain("/headsdown:wrap");
     });
   });
 

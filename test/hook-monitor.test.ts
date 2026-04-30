@@ -100,6 +100,204 @@ describe("post-tool-use hook", () => {
       "Extend action is currently allowed",
     );
   });
+
+  it("surfaces local box state errors from progress reporting", async () => {
+    await writeCliStub(`
+      const command = process.argv[2];
+      if (command === "proposals") {
+        console.log("null");
+      } else if (command === "report-progress") {
+        console.log(JSON.stringify({
+          reported: true,
+          runId: null,
+          attentionWindowClosing: false,
+          attentionWindow: null,
+          allowedActionKeys: [],
+          timeBoxError: "Invalid HeadsDown box at /tmp/time-box.json: file is corrupt"
+        }));
+      } else {
+        console.log("null");
+      }
+    `);
+
+    const result = await runScript(
+      "hooks/post-tool-use.sh",
+      JSON.stringify({ tool_name: "Write" }),
+      {
+        CLAUDE_PLUGIN_ROOT: pluginRoot,
+        CLAUDE_SESSION_ID: "box-error-context",
+      },
+    );
+
+    expect(result.code).toBe(0);
+    const payload = JSON.parse(result.stdout);
+    expect(payload.systemMessage).toContain("HeadsDown box state could not be read");
+    expect(payload.hookSpecificOutput.additionalContext).toContain("HeadsDown box state warning");
+    expect(payload.hookSpecificOutput.additionalContext).toContain("file is corrupt");
+    expect(payload.hookSpecificOutput.additionalContext).toContain("/headsdown:box clear");
+  });
+
+  it("surfaces report-progress command failures", async () => {
+    await writeCliStub(`
+      const command = process.argv[2];
+      if (command === "proposals") {
+        console.log("null");
+      } else if (command === "report-progress") {
+        console.error("boom");
+        process.exit(2);
+      } else {
+        console.log("null");
+      }
+    `);
+
+    const result = await runScript(
+      "hooks/post-tool-use.sh",
+      JSON.stringify({ tool_name: "Read" }),
+      {
+        CLAUDE_PLUGIN_ROOT: pluginRoot,
+        CLAUDE_SESSION_ID: "progress-command-error-context",
+      },
+    );
+
+    expect(result.code).toBe(0);
+    const payload = JSON.parse(result.stdout);
+    expect(payload.systemMessage).toBeUndefined();
+    expect(payload.hookSpecificOutput.additionalContext).toContain(
+      "HeadsDown progress command warning",
+    );
+    expect(payload.hookSpecificOutput.additionalContext).toContain("boom");
+  });
+
+  it("surfaces degraded progress reporting and availability warnings", async () => {
+    await writeCliStub(`
+      const command = process.argv[2];
+      if (command === "proposals") {
+        console.log("null");
+      } else if (command === "report-progress") {
+        console.log(JSON.stringify({
+          reported: false,
+          reason: "unavailable",
+          errorCategory: "auth",
+          message: "HeadsDown authentication is unavailable. Run /headsdown auth before relying on progress reporting.",
+          details: "Missing credentials",
+          availabilityError: "Could not query HeadsDown availability for wrap-up guidance: network down",
+          progressReportError: "Could not send HeadsDown progress telemetry."
+        }));
+      } else {
+        console.log("null");
+      }
+    `);
+
+    const result = await runScript(
+      "hooks/post-tool-use.sh",
+      JSON.stringify({ tool_name: "Read" }),
+      {
+        CLAUDE_PLUGIN_ROOT: pluginRoot,
+        CLAUDE_SESSION_ID: "progress-error-context",
+      },
+    );
+
+    expect(result.code).toBe(0);
+    const payload = JSON.parse(result.stdout);
+    expect(payload.systemMessage).toBeUndefined();
+    expect(payload.hookSpecificOutput.additionalContext).toContain(
+      "HeadsDown progress reporting warning",
+    );
+    expect(payload.hookSpecificOutput.additionalContext).toContain("HeadsDown authentication");
+    expect(payload.hookSpecificOutput.additionalContext).toContain("Missing credentials");
+    expect(payload.hookSpecificOutput.additionalContext).toContain(
+      "HeadsDown availability warning",
+    );
+    expect(payload.hookSpecificOutput.additionalContext).toContain(
+      "HeadsDown progress telemetry warning",
+    );
+  });
+
+  it("keeps window-closing guidance when a box tightens an active closing run", async () => {
+    await writeCliStub(`
+      const command = process.argv[2];
+      if (command === "proposals") {
+        console.log("null");
+      } else if (command === "report-progress") {
+        console.log(JSON.stringify({
+          reported: true,
+          runId: "run-window",
+          attentionWindowClosing: true,
+          attentionWindow: {
+            deadlineAt: "2026-04-29T18:00:00Z",
+            thresholdMinutes: 15,
+            remainingMinutes: 6,
+            hints: ["box is active"],
+            source: "time_box"
+          },
+          allowedActionKeys: ["allow_for_duration", "pause_and_summarize"]
+        }));
+      } else {
+        console.log("null");
+      }
+    `);
+
+    const result = await runScript(
+      "hooks/post-tool-use.sh",
+      JSON.stringify({ tool_name: "Write" }),
+      {
+        CLAUDE_PLUGIN_ROOT: pluginRoot,
+        CLAUDE_SESSION_ID: "box-tightens-window-context",
+      },
+    );
+
+    expect(result.code).toBe(0);
+    const payload = JSON.parse(result.stdout);
+    expect(payload.systemMessage).toContain("Window closing is active");
+    expect(payload.systemMessage).toContain("/headsdown:extend");
+    expect(payload.hookSpecificOutput.additionalContext).toContain("Target run_id: run-window");
+    expect(payload.hookSpecificOutput.additionalContext).toContain(
+      "Active box deadline is driving this warning",
+    );
+  });
+
+  it("uses box-specific guidance for local time-box warnings", async () => {
+    await writeCliStub(`
+      const command = process.argv[2];
+      if (command === "proposals") {
+        console.log("null");
+      } else if (command === "report-progress") {
+        console.log(JSON.stringify({
+          reported: true,
+          runId: "run-good",
+          attentionWindowClosing: true,
+          attentionWindow: {
+            deadlineAt: "2026-04-29T18:00:00Z",
+            thresholdMinutes: 15,
+            remainingMinutes: 6,
+            hints: ["box is active"],
+            source: "time_box"
+          },
+          allowedActionKeys: ["narrow_scope"]
+        }));
+      } else {
+        console.log("null");
+      }
+    `);
+
+    const result = await runScript(
+      "hooks/post-tool-use.sh",
+      JSON.stringify({ tool_name: "Write" }),
+      {
+        CLAUDE_PLUGIN_ROOT: pluginRoot,
+        CLAUDE_SESSION_ID: "box-context",
+      },
+    );
+
+    expect(result.code).toBe(0);
+    const payload = JSON.parse(result.stdout);
+    expect(payload.systemMessage).toContain("Box deadline is near");
+    expect(payload.systemMessage).not.toContain("/headsdown:extend");
+    expect(payload.systemMessage).not.toContain("/headsdown:wrap");
+    expect(payload.hookSpecificOutput.additionalContext).toContain("HeadsDown box warning");
+    expect(payload.hookSpecificOutput.additionalContext).toContain("/headsdown:box clear");
+    expect(payload.hookSpecificOutput.additionalContext).not.toContain("Target run_id");
+  });
 });
 
 describe("attention-window monitor", () => {
@@ -128,6 +326,168 @@ describe("attention-window monitor", () => {
     expect(notices).toHaveLength(1);
     expect(notices[0]).toContain("Remaining minutes: 6");
     expect(notices[0]).toContain("Hints: wrap soon");
+  });
+
+  it("emits a window-closing notice when deadlineAt is null but remainingMinutes is present", async () => {
+    await writeCliStub(`
+      if (process.argv[2] === "status") {
+        console.log(JSON.stringify({
+          headsdownCall: { key: "attention_window_closing" },
+          availability: {
+            wrapUpGuidance: {
+              deadlineAt: null,
+              thresholdMinutes: 30,
+              remainingMinutes: 6,
+              hints: ["wrap soon"]
+            }
+          }
+        }));
+      }
+    `);
+
+    const result = await runMonitor(`null-deadline-monitor-${process.pid}-${Date.now()}`, 600);
+    const notices = result.stdout
+      .split("\n")
+      .filter((line) => line.includes("[HeadsDown] Window closing"));
+
+    expect(notices).toHaveLength(1);
+    expect(notices[0]).toContain("Remaining minutes: 6");
+    expect(notices[0]).toContain("Hints: wrap soon");
+  });
+
+  it("stays quiet when status says attention-window guidance is suppressed", async () => {
+    await writeCliStub(`
+      if (process.argv[2] === "status") {
+        console.log(JSON.stringify({
+          attentionWindowClosing: false,
+          headsdownCall: { key: "attention_window_closing" },
+          effectiveAttentionWindow: null,
+          availability: {
+            wrapUpGuidance: {
+              active: true,
+              selectedMode: "full_depth",
+              source: "forced_full_depth",
+              deadlineAt: "2026-04-29T18:00:00Z",
+              thresholdMinutes: 30,
+              remainingMinutes: 6,
+              hints: ["full depth active"]
+            }
+          }
+        }));
+      }
+    `);
+
+    const result = await runMonitor(`suppressed-window-monitor-${process.pid}-${Date.now()}`, 120);
+
+    expect(result.stdout).not.toContain("[HeadsDown] Window closing");
+    expect(result.stdout).not.toContain("[HeadsDown] Box deadline near");
+  });
+
+  it("uses the effective time-box deadline when it drives the warning", async () => {
+    await writeCliStub(`
+      if (process.argv[2] === "status") {
+        console.log(JSON.stringify({
+          headsdownCall: { key: "good_to_run" },
+          effectiveAttentionWindow: {
+            deadlineAt: "2026-04-29T17:30:00Z",
+            thresholdMinutes: 15,
+            remainingMinutes: 10,
+            hints: ["self-declared box is active"],
+            source: "time_box"
+          },
+          availability: {
+            wrapUpGuidance: {
+              deadlineAt: "2026-04-29T18:00:00Z",
+              thresholdMinutes: 30,
+              remainingMinutes: 40,
+              hints: ["backend hint"]
+            }
+          }
+        }));
+      }
+    `);
+
+    const result = await runMonitor(`time-box-monitor-${process.pid}-${Date.now()}`, 600);
+    const notices = result.stdout
+      .split("\n")
+      .filter((line) => line.includes("[HeadsDown] Box deadline near"));
+
+    expect(notices).toHaveLength(1);
+    expect(notices[0]).not.toContain("/headsdown:extend");
+    expect(notices[0]).not.toContain("/headsdown:wrap");
+    expect(notices[0]).toContain("/headsdown:box clear");
+    expect(notices[0]).toContain("Remaining minutes: 10");
+    expect(notices[0]).toContain("self-declared box is active");
+  });
+
+  it("stays quiet for a time box outside its warning threshold", async () => {
+    await writeCliStub(`
+      if (process.argv[2] === "status") {
+        console.log(JSON.stringify({
+          headsdownCall: { key: "good_to_run" },
+          effectiveAttentionWindow: {
+            deadlineAt: "2026-04-29T17:30:00Z",
+            thresholdMinutes: 15,
+            remainingMinutes: 20,
+            hints: ["self-declared box is active"],
+            source: "time_box"
+          },
+          availability: { wrapUpGuidance: null }
+        }));
+      }
+    `);
+
+    const result = await runMonitor(`quiet-time-box-monitor-${process.pid}-${Date.now()}`, 120);
+
+    expect(result.stdout).not.toContain("[HeadsDown] Box deadline near");
+    expect(result.stdout).not.toContain("[HeadsDown] Window closing");
+  });
+
+  it("keeps window-closing monitor guidance when a box tightens an active closing run", async () => {
+    await writeCliStub(`
+      if (process.argv[2] === "status") {
+        console.log(JSON.stringify({
+          headsdownCall: { key: "attention_window_closing" },
+          effectiveAttentionWindow: {
+            deadlineAt: "2026-04-29T17:30:00Z",
+            thresholdMinutes: 15,
+            remainingMinutes: 10,
+            hints: ["self-declared box is active"],
+            source: "time_box"
+          },
+          availability: { wrapUpGuidance: null }
+        }));
+      }
+    `);
+
+    const result = await runMonitor(`mixed-window-monitor-${process.pid}-${Date.now()}`, 600);
+    const notices = result.stdout
+      .split("\n")
+      .filter((line) => line.includes("[HeadsDown] Window closing"));
+
+    expect(notices).toHaveLength(1);
+    expect(notices[0]).toContain("/headsdown:extend");
+    expect(notices[0]).toContain("Active box deadline is driving this warning");
+  });
+
+  it("emits a diagnostic when status includes a time-box error", async () => {
+    await writeCliStub(`
+      if (process.argv[2] === "status") {
+        console.log(JSON.stringify({
+          headsdownCall: { key: "good_to_run" },
+          timeBoxError: "Invalid HeadsDown box at /tmp/time-box.json: file is corrupt",
+          availability: { wrapUpGuidance: null }
+        }));
+      }
+    `);
+
+    const result = await runMonitor("time-box-error-monitor", 120);
+    const warnings = result.stderr
+      .split("\n")
+      .filter((line) => line.includes("Attention-window monitor warning"));
+
+    expect(warnings).toHaveLength(1);
+    expect(warnings[0]).toContain("file is corrupt");
   });
 
   it("emits a diagnostic when status polling fails", async () => {

@@ -131,6 +131,20 @@ Immediate behavior:
 4. Extend can be applied only when the user explicitly asks, using `/headsdown:extend` (or an explicit instruction) with `action_key: "allow_for_duration"`.
 5. If no action is taken, continue with tighter wrap-up hints as the deadline approaches. Window passing is informational and does not force a stop.
 
+## Self-Declared Deadlines (Box)
+
+Use `/headsdown:box <duration>` when the user wants a focused work deadline that is shorter than the current calendar-derived window. Example forms include `30m`, `45m`, `1h`, and `1h30m`.
+
+A box is local and session-scoped. When it is earlier than the backend-derived window, it becomes the effective attention-window deadline for Claude Code hooks and monitors so warnings arrive earlier. It does not create an availability override, does not change model routing, and does not stop the agent when the deadline passes.
+
+Commands:
+
+- `/headsdown:box 30m` sets or replaces the active local deadline.
+- `/headsdown:box status` shows the active deadline, remaining minutes, and warning threshold.
+- `/headsdown:box clear` clears the local deadline so future warnings use backend-derived attention-window behavior when available.
+
+If a box expires, keep working with tighter hints until the user chooses `/headsdown:wrap`, asks for `/headsdown:extend`, clears the box, or gives different instructions. Do not auto-wrap or pause solely because the box deadline passed.
+
 ## Interrupt Evaluation
 
 Before asking the user a **non-critical** clarifying question mid-task, call `headsdown_interrupt`.

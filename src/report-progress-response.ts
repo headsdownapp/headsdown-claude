@@ -1,5 +1,7 @@
 import type { AgentControlOverviewView, AgentRunSummaryView } from "./agent-control.js";
 import { normalizeHeadsDownCallKey } from "./headsdown-call-keys.js";
+import { resolveEffectiveAttentionWindow, isWithinWarningWindow } from "./time-box.js";
+import type { AttentionWindowInput, EffectiveAttentionWindow, TimeBoxState } from "./time-box.js";
 
 export interface ActiveRunRef {
   runId: string;
@@ -11,6 +13,7 @@ export interface AttentionWindowState {
   thresholdMinutes: number | null;
   remainingMinutes: number | null;
   hints: string[];
+  source: "backend" | "time_box" | null;
 }
 
 export interface CurrentRunContext {
@@ -20,59 +23,119 @@ export interface CurrentRunContext {
   allowedActionKeys: string[];
 }
 
-interface BaseReportProgressResponse {
+interface ReportProgressGuidanceFields {
+  attentionWindowClosing: boolean;
+  attentionWindow: AttentionWindowState | null;
+}
+
+interface BaseReportProgressResponse extends ReportProgressGuidanceFields {
   reported: true;
   runId: string | null;
   proposalRef: string | null;
   allowedActionKeys: string[];
 }
 
-export type ReportProgressResponse = BaseReportProgressResponse &
-  (
-    | {
-        attentionWindowClosing: true;
-        attentionWindow: AttentionWindowState;
-      }
-    | {
-        attentionWindowClosing: false;
-        attentionWindow: null;
-      }
-  );
+export type ReportProgressResponse =
+  | BaseReportProgressResponse
+  | (ReportProgressGuidanceFields & {
+      reported: false;
+      reason: "unavailable";
+      errorCategory: "auth" | "unexpected";
+      message: string;
+      details: string;
+      runId?: string | null;
+      proposalRef?: string | null;
+      allowedActionKeys?: string[];
+    });
 
 export function buildReportProgressResponse(input: {
   activeRun: ActiveRunRef | null;
   overview: AgentControlOverviewView | null;
-  wrapUpGuidance?: {
-    deadlineAt?: string | null;
-    thresholdMinutes?: number | null;
-    remainingMinutes?: number | null;
-    hints?: string[] | null;
-  } | null;
+  wrapUpGuidance?: AttentionWindowInput | null;
+  timeBox?: TimeBoxState | null;
+  now?: Date;
 }): ReportProgressResponse {
   const currentRun = resolveCurrentRunContext({
     activeRun: input.activeRun,
     overview: input.overview,
   });
-  const base = {
+  const guidance = buildReportProgressGuidance({
+    callKey: currentRun.callKey,
+    wrapUpGuidance: input.wrapUpGuidance ?? null,
+    timeBox: input.timeBox ?? null,
+    now: input.now,
+  });
+
+  return {
     reported: true,
     runId: currentRun.runId,
     proposalRef: currentRun.proposalRef,
     allowedActionKeys: currentRun.allowedActionKeys,
-  } satisfies BaseReportProgressResponse;
+    ...guidance,
+  };
+}
 
-  if (currentRun.callKey === "attention_window_closing") {
-    return {
-      ...base,
-      attentionWindowClosing: true,
-      attentionWindow: buildAttentionWindowState(input.wrapUpGuidance ?? null),
-    };
-  }
+export function buildReportProgressUnavailableResponse(input: {
+  errorCategory: "auth" | "unexpected";
+  message: string;
+  details: string;
+  activeRun?: ActiveRunRef | null;
+  overview?: AgentControlOverviewView | null;
+  wrapUpGuidance?: AttentionWindowInput | null;
+  timeBox?: TimeBoxState | null;
+  now?: Date;
+}): ReportProgressResponse {
+  const currentRun = resolveCurrentRunContext({
+    activeRun: input.activeRun ?? null,
+    overview: input.overview ?? null,
+  });
+  const guidance = buildReportProgressGuidance({
+    callKey: currentRun.callKey,
+    wrapUpGuidance: input.wrapUpGuidance ?? null,
+    timeBox: input.timeBox ?? null,
+    now: input.now,
+  });
 
   return {
-    ...base,
-    attentionWindowClosing: false,
-    attentionWindow: null,
+    reported: false,
+    reason: "unavailable",
+    errorCategory: input.errorCategory,
+    message: input.message,
+    details: input.details,
+    runId: currentRun.runId,
+    proposalRef: currentRun.proposalRef,
+    allowedActionKeys: currentRun.allowedActionKeys,
+    ...guidance,
   };
+}
+
+function buildReportProgressGuidance(input: {
+  callKey: string | null;
+  wrapUpGuidance: AttentionWindowInput | null;
+  timeBox: TimeBoxState | null;
+  now?: Date;
+}): ReportProgressGuidanceFields {
+  const backendClosing =
+    input.callKey === "attention_window_closing" && !isFullDepthSuppressed(input.wrapUpGuidance);
+  const effectiveAttentionWindow = resolveEffectiveAttentionWindow({
+    backend: input.wrapUpGuidance,
+    timeBox: input.timeBox,
+    now: input.now,
+    forceTimeBoxWarning: backendClosing,
+  });
+  const attentionWindowClosing =
+    !!effectiveAttentionWindow &&
+    (backendClosing || isWithinWarningWindow(effectiveAttentionWindow));
+
+  return attentionWindowClosing
+    ? {
+        attentionWindowClosing: true,
+        attentionWindow: buildAttentionWindowState(effectiveAttentionWindow),
+      }
+    : {
+        attentionWindowClosing: false,
+        attentionWindow: null,
+      };
 }
 
 export function resolveCurrentRunContext(input: {
@@ -126,14 +189,14 @@ function resolveOverviewCallKey(
   return normalizeHeadsDownCallKey(call?.knownKey) ?? normalizeHeadsDownCallKey(call?.key);
 }
 
-function buildAttentionWindowState(
-  input: {
-    deadlineAt?: string | null;
-    thresholdMinutes?: number | null;
-    remainingMinutes?: number | null;
-    hints?: string[] | null;
-  } | null,
-): AttentionWindowState {
+function isFullDepthSuppressed(input: AttentionWindowInput | null): boolean {
+  return (
+    normalizeText(input?.selectedMode) === "full_depth" ||
+    normalizeText(input?.source) === "forced_full_depth"
+  );
+}
+
+function buildAttentionWindowState(input: EffectiveAttentionWindow | null): AttentionWindowState {
   return {
     deadlineAt: normalizeIsoTimestamp(input?.deadlineAt),
     thresholdMinutes: normalizeNonNegativeFiniteNumber(input?.thresholdMinutes),
@@ -143,6 +206,7 @@ function buildAttentionWindowState(
           .map((hint) => (typeof hint === "string" ? hint.trim() : ""))
           .filter((hint): hint is string => hint.length > 0)
       : [],
+    source: input?.source ?? null,
   };
 }
 
@@ -157,6 +221,12 @@ function normalizeIsoTimestamp(value: string | null | undefined): string | null 
   if (!trimmed) return null;
 
   return Number.isNaN(Date.parse(trimmed)) ? null : trimmed;
+}
+
+function normalizeText(value: string | null | undefined): string | null {
+  if (typeof value !== "string") return null;
+  const trimmed = value.trim().toLowerCase();
+  return trimmed.length > 0 ? trimmed : null;
 }
 
 function normalizeActionKeys(values: string[] | null | undefined): string[] {

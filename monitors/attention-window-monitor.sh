@@ -1,5 +1,5 @@
 #!/bin/bash
-# HeadsDown monitor for attention-window-closing calls.
+# HeadsDown monitor for attention-window and local box deadline warnings.
 # Emits a notification line when the warning fingerprint changes.
 
 set -euo pipefail
@@ -48,19 +48,46 @@ while true; do
     continue
   fi
 
-  last_error_fingerprint=""
+  time_box_error=$(echo "$status_json" | jq -r '.timeBoxError // empty' 2>/dev/null || echo "")
+  if [ -n "$time_box_error" ]; then
+    emit_diagnostic "time-box-error:${time_box_error}" "${time_box_error}"
+  else
+    last_error_fingerprint=""
+  fi
   call_key=$(echo "$status_json" | jq -r '.headsdownCall.key // .headsdownCall.knownKey // empty' 2>/dev/null || echo "")
   normalized_key=$(echo "$call_key" | tr '[:upper:]' '[:lower:]' | tr '-' '_' | xargs)
 
-  if [ "$normalized_key" = "attention_window_closing" ]; then
-    deadline_at=$(echo "$status_json" | jq -r '.availability.wrapUpGuidance.deadlineAt // empty' 2>/dev/null || echo "")
-    threshold_minutes=$(echo "$status_json" | jq -r '.availability.wrapUpGuidance.thresholdMinutes // empty' 2>/dev/null || echo "")
-    remaining_minutes=$(echo "$status_json" | jq -r '.availability.wrapUpGuidance.remainingMinutes // empty' 2>/dev/null || echo "")
-    hints=$(echo "$status_json" | jq -r '(.availability.wrapUpGuidance.hints // []) | map(select(type == "string" and length > 0)) | join("; ")' 2>/dev/null || echo "")
+  deadline_at=$(echo "$status_json" | jq -r '.effectiveAttentionWindow.deadlineAt // .availability.wrapUpGuidance.deadlineAt // empty' 2>/dev/null || echo "")
+  threshold_minutes=$(echo "$status_json" | jq -r '.effectiveAttentionWindow.thresholdMinutes // .availability.wrapUpGuidance.thresholdMinutes // empty' 2>/dev/null || echo "")
+  remaining_minutes=$(echo "$status_json" | jq -r '.effectiveAttentionWindow.remainingMinutes // .availability.wrapUpGuidance.remainingMinutes // empty' 2>/dev/null || echo "")
+  hints=$(echo "$status_json" | jq -r '(.effectiveAttentionWindow.hints // .availability.wrapUpGuidance.hints // []) | map(select(type == "string" and length > 0)) | join("; ")' 2>/dev/null || echo "")
+  effective_source=$(echo "$status_json" | jq -r '.effectiveAttentionWindow.source // empty' 2>/dev/null || echo "")
+  resolved_attention_window_closing=$(echo "$status_json" | jq -r 'if has("attentionWindowClosing") then (.attentionWindowClosing | tostring) else "" end' 2>/dev/null || echo "")
+  should_warn="false"
 
-    fingerprint="${deadline_at}|${threshold_minutes}"
-    if [ -n "$deadline_at" ] && [ "$fingerprint" != "$last_fingerprint" ]; then
-      notice="[HeadsDown] Window closing. Use /headsdown:extend to request more time or /headsdown:wrap to pause and summarize."
+  if [ "$resolved_attention_window_closing" = "true" ]; then
+    should_warn="true"
+  elif [ "$resolved_attention_window_closing" = "false" ]; then
+    should_warn="false"
+  elif [ "$normalized_key" = "attention_window_closing" ]; then
+    should_warn="true"
+  elif [ "$effective_source" = "time_box" ] && [ -n "$remaining_minutes" ] && [ -n "$threshold_minutes" ]; then
+    if [ "$remaining_minutes" -le "$threshold_minutes" ] 2>/dev/null; then
+      should_warn="true"
+    fi
+  fi
+
+  if [ "$should_warn" = "true" ]; then
+    fingerprint="${deadline_at}|${threshold_minutes}|${remaining_minutes}|${effective_source}"
+    if [ "$fingerprint" != "$last_fingerprint" ]; then
+      if [ "$effective_source" = "time_box" ] && [ "$normalized_key" != "attention_window_closing" ]; then
+        notice="[HeadsDown] Box deadline near. Keep scope tight; the box will not stop work automatically. Use /headsdown:box clear to clear it or /headsdown:box <duration> to replace it."
+      else
+        notice="[HeadsDown] Window closing. Use /headsdown:extend to request more time or /headsdown:wrap to pause and summarize."
+        if [ "$effective_source" = "time_box" ]; then
+          notice="$notice Active box deadline is driving this warning."
+        fi
+      fi
       if [ -n "$remaining_minutes" ]; then
         notice="$notice Remaining minutes: ${remaining_minutes}."
       fi
