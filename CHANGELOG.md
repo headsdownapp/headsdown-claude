@@ -1,25 +1,16 @@
 # Changelog
 
-## Unreleased
-
-- Track the built `dist/` bundle in git so `/plugin install` works without a Node toolchain on the install host.
-- Added `.claude-plugin/marketplace.json` so the repo can be added directly via `/plugin marketplace add headsdownapp/headsdown-claude`.
-- Added a CI guard that fails the build if committed `dist/` drifts from `src/`.
-- Documented the `headsdown_deferred` MCP tool in the README and corrected the tool count.
-- Clarified that plugin config (`trustLevel`, `sensitivePaths`, `calibration`) lives at `~/.config/headsdown/config.json` as a flat JSON object.
-- Refreshed install instructions to lead with the marketplace flow and document the `--plugin-dir` development path.
-- Renamed `/headsdown:headsdown` to dedicated `/headsdown:status` and `/headsdown:auth` commands so the slash menu reads cleanly.
-- Renamed `/headsdown:box` to `/headsdown:timebox` so the verb is self-explanatory in the slash menu.
-- Rewrote slash command descriptions to drop internal jargon (`attention-window-closing`, `pause_and_summarize`, `allow_for_duration`, `metadata-only deferred decisions`) in favor of plain user-facing language.
-
 ## 0.2.0
 
-- Added `headsdown_deferred` MCP tool plus `/headsdown:wake-up` slash command for reviewing metadata-only deferred decisions captured during autopilot.
+### Features
+
+- Added `/headsdown:status`, `/headsdown:auth`, `/headsdown:timebox`, `/headsdown:extend`, `/headsdown:wrap`, and `/headsdown:wake-up` slash commands.
+- Added `headsdown_deferred` MCP tool for reviewing metadata-only deferred decisions captured during autopilot.
 - Added autopilot anti-stuck nudges: the Stop hook records deferred-decision events locally and exits with a nudge so Claude continues without waiting for input.
 - Added `UserPromptSubmit` hook that injects fresh per-mode SDK-rendered autopilot policy fragments before each turn.
 - Added `AskUserQuestion` PreToolUse intercept: denies the ask in autopilot mode and tells Claude to defer instead.
 - Added autopilot wake-up digest: when SessionStart sees a return to online mode it surfaces counts, buckets, and timestamps for review through `headsdown_deferred`.
-- Added `/headsdown:timebox`, `/headsdown:extend`, and `/headsdown:wrap` slash commands plus `time-box` CLI for session-scoped local deadlines.
+- Added `time-box` CLI plus session-scoped local deadlines that tighten attention-window warnings without stopping work automatically.
 - Added attention-window-closing call handling: a plugin monitor polls during active runs and emits a notification when a new warning fingerprint appears.
 - Added HeadsDown call rendering and Claude-action-to-HeadsDown-action mapping so directives like "Off the clock" and "Keep it tight" surface in Claude output.
 - Added off-clock queue flow and privacy-safe Claude run progress reporting.
@@ -29,8 +20,20 @@
 - Enhanced `SessionStart` hook: now injects upcoming window transition warnings (within 60 minutes) including the wrap-up threshold, so Claude plans scope before the window closes.
 - Updated `proposals` CLI command: now includes `estimatedFiles` from a companion meta file written at proposal approval time.
 - Extended `SKILL.md` with guidance for mid-task scope escalation, wrap-up handoff notes, digest follow-up proposals, proactive session-end outcome reporting, subagent delegation grant verification, and schedule/cron availability awareness.
+
+### Release infrastructure
+
+- First release published via `/plugin marketplace add headsdownapp/headsdown-claude`. The repo ships a built `dist/` bundle so `/plugin install` works without a Node toolchain on the install host.
 - Bundled the distributable and inlined the HeadsDown SDK so consumers do not install it transitively.
+- Added a CI guard that fails the build if committed `dist/` drifts from `src/`.
 - Automated `@headsdown/sdk` dependency bumps via Renovate.
+
+### Documentation
+
+- Refreshed install instructions to lead with the marketplace flow and document the `--plugin-dir` development path.
+- Documented the `headsdown_deferred` MCP tool in the README.
+- Clarified that plugin config (`trustLevel`, `sensitivePaths`, `calibration`) lives at `~/.config/headsdown/config.json` as a flat JSON object.
+- Rewrote slash command descriptions to drop internal jargon in favor of plain user-facing language.
 
 ## 0.1.1
 
