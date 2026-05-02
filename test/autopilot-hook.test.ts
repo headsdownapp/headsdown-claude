@@ -23,7 +23,7 @@ afterEach(async () => {
   await rm(tempDir, { recursive: true, force: true });
 });
 
-describe("autopilot Stop hook", () => {
+describe("autopilot hooks", () => {
   it("is registered alongside the existing Stop hook", async () => {
     const hooks = JSON.parse(await readFile("hooks/hooks.json", "utf-8"));
     const stopCommands = hooks.hooks.Stop.flatMap((entry: { hooks: Array<{ command: string }> }) =>
@@ -44,12 +44,36 @@ describe("autopilot Stop hook", () => {
     await expect(runHook({}, false)).resolves.toMatchObject({ stdout: "", stderr: "" });
   });
 
+  it("registers the AskUserQuestion PreToolUse hook", async () => {
+    const hooks = JSON.parse(await readFile("hooks/hooks.json", "utf-8"));
+    const askHook = hooks.hooks.PreToolUse.find(
+      (entry: { matcher: string }) => entry.matcher === "AskUserQuestion",
+    );
+
+    expect(askHook.hooks[0].command).toContain("autopilot-intercept-ask.sh");
+    expect(askHook.hooks[0].command).toContain("CLAUDE_PLUGIN_ROOT");
+  });
+
   it("registered command exits zero when CLAUDE_PLUGIN_ROOT is missing", async () => {
     const command = await registeredAutopilotCommand();
 
     await expect(runRegisteredCommand(command, {}, false)).resolves.toMatchObject({
       stdout: "",
       stderr: "",
+    });
+  });
+
+  it("registered command preserves Stop exit 2 nudges", async () => {
+    const command = await registeredAutopilotCommand();
+    await mkdir(join(tempDir, "dist"));
+    await writeFile(
+      join(tempDir, "dist", "cli.js"),
+      `console.error("Defer this question and continue. Do not wait."); process.exit(2);`,
+    );
+
+    await expect(runRegisteredCommand(command)).rejects.toMatchObject({
+      code: 2,
+      stderr: expect.stringContaining("Defer this question"),
     });
   });
 
@@ -62,6 +86,19 @@ describe("autopilot Stop hook", () => {
     await writeFile(join(tempDir, "dist", "cli.js"), "process.exit(42);\n");
 
     await expect(runHook()).resolves.toMatchObject({ stdout: "", stderr: "" });
+  });
+
+  it("preserves Stop exit 2 and stderr for anti-stuck nudges", async () => {
+    await mkdir(join(tempDir, "dist"));
+    await writeFile(
+      join(tempDir, "dist", "cli.js"),
+      `console.error("Defer this question and continue. Do not wait."); process.exit(2);`,
+    );
+
+    await expect(runHook()).rejects.toMatchObject({
+      code: 2,
+      stderr: expect.stringContaining("Defer this question"),
+    });
   });
 
   it("invokes the autopilot detect-deferral CLI route", async () => {

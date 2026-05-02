@@ -1125,14 +1125,21 @@ describe("Plugin structure", () => {
       const config = JSON.parse(raw);
 
       expect(config.hooks.PreToolUse).toBeInstanceOf(Array);
-      expect(config.hooks.PreToolUse).toHaveLength(1);
 
-      const preToolUse = config.hooks.PreToolUse[0];
+      const preToolUse = config.hooks.PreToolUse.find((entry: { matcher: string }) =>
+        entry.matcher.includes("Write"),
+      );
+      expect(preToolUse).toBeTruthy();
       expect(preToolUse.matcher).toContain("Write");
       expect(preToolUse.matcher).toContain("Edit");
       expect(preToolUse.matcher).toContain("MultiEdit");
       expect(preToolUse.hooks[0].command).toContain("${CLAUDE_PLUGIN_ROOT}");
       expect(preToolUse.hooks[0].timeout).toBeLessThanOrEqual(10);
+      expect(
+        config.hooks.PreToolUse.some(
+          (entry: { matcher: string }) => entry.matcher === "AskUserQuestion",
+        ),
+      ).toBe(true);
     });
 
     it("PostToolUse hook observes all tools for progress reporting", async () => {
