@@ -18,6 +18,7 @@ import {
   shouldRecordAutopilotDeferral,
   type AutopilotDeferralConfig,
 } from "./deferral.js";
+import { loadFreshAutopilotPolicy } from "./policy.js";
 import { AutopilotStateStore, type AutopilotState, type Mode } from "./state.js";
 
 export interface StopHookInput {
@@ -162,9 +163,16 @@ export async function handleDetectDeferral(
     })).catch(() => undefined);
   }
 
+  const policyLoad = await loadFreshAutopilotPolicy({ client, mode, config });
+  if (policyLoad.active && !policyLoad.policy) {
+    console.error(
+      "[HeadsDown autopilot] Hosted autopilot policy unavailable; using local fallback policy for this anti-stuck nudge.",
+    );
+  }
   const antiStuck = evaluateAntiStuck({
     stopHookInput: input,
     mode,
+    policy: policyLoad.policy,
     capabilities: claudeCodeIntegrationCapabilities(now),
     matchedPattern: detection.pattern,
     autopilotState: currentState,

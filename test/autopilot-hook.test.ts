@@ -44,6 +44,16 @@ describe("autopilot hooks", () => {
     await expect(runHook({}, false)).resolves.toMatchObject({ stdout: "", stderr: "" });
   });
 
+  it("registers the UserPromptSubmit autopilot prompt hook", async () => {
+    const hooks = JSON.parse(await readFile("hooks/hooks.json", "utf-8"));
+    const promptHook = hooks.hooks.UserPromptSubmit.find(
+      (entry: { matcher: string }) => entry.matcher === "*",
+    );
+
+    expect(promptHook.hooks[0].command).toContain("autopilot-prompt.sh");
+    expect(promptHook.hooks[0].command).toContain("CLAUDE_PLUGIN_ROOT");
+  });
+
   it("registers the AskUserQuestion PreToolUse hook", async () => {
     const hooks = JSON.parse(await readFile("hooks/hooks.json", "utf-8"));
     const askHook = hooks.hooks.PreToolUse.find(
@@ -114,6 +124,7 @@ else if (command === "next-window") console.log("null");
 else if (command === "digest-count") console.log("0");
 else if (command === "continuation") process.exit(1);
 else if (command === "autopilot" && sub === "wake-up") console.log(JSON.stringify({ hookSpecificOutput: { hookEventName: "SessionStart", additionalContext: "Wake-up digest ready." } }));
+else if (command === "autopilot" && sub === "prompt") process.exit(0);
 else process.exit(0);`,
     );
 
@@ -126,6 +137,35 @@ else process.exit(0);`,
     expect(output.hookSpecificOutput).toEqual({
       hookEventName: "SessionStart",
       additionalContext: "Wake-up digest ready.",
+    });
+  });
+
+  it("session-start appends autopilot prompt context for first-turn preload", async () => {
+    await cp("hooks/session-start.sh", join(tempDir, "hooks", "session-start.sh"));
+    await chmod(join(tempDir, "hooks", "session-start.sh"), 0o755);
+    await mkdir(join(tempDir, "dist"));
+    await writeFile(
+      join(tempDir, "dist", "cli.js"),
+      `const command = process.argv[2]; const sub = process.argv[3];
+if (command === "status") console.log(JSON.stringify({ contract: { mode: "offline" }, availability: { inReachableHours: false, wrapUpGuidance: {} }, summary: "Mode: offline", wrapUpInstruction: null }));
+else if (command === "action-marker") console.log("null");
+else if (command === "next-window") console.log("null");
+else if (command === "digest-count") console.log("0");
+else if (command === "continuation") process.exit(1);
+else if (command === "autopilot" && sub === "wake-up") process.exit(0);
+else if (command === "autopilot" && sub === "prompt") console.log(JSON.stringify({ hookSpecificOutput: { hookEventName: "SessionStart", additionalContext: "Autopilot prompt ready." } }));
+else process.exit(0);`,
+    );
+
+    const result = await execFileAsync("bash", [join(tempDir, "hooks", "session-start.sh")], {
+      env: { ...process.env, CLAUDE_PLUGIN_ROOT: tempDir },
+    });
+    const output = JSON.parse(result.stdout);
+
+    expect(output.systemMessage).toContain("Axis 1");
+    expect(output.hookSpecificOutput).toEqual({
+      hookEventName: "SessionStart",
+      additionalContext: "Autopilot prompt ready.",
     });
   });
 

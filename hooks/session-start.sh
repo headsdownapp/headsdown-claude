@@ -155,9 +155,26 @@ if echo "$output" | jq -e . > /dev/null 2>&1; then
     wake_up_context=$(echo "$wake_up_json" | jq -r '.hookSpecificOutput.additionalContext // empty' 2>/dev/null)
   fi
 
+  autopilot_prompt_json=$(node "$CLI" autopilot prompt --as-session-context) || autopilot_prompt_json=""
+  autopilot_prompt_context=""
+  if [ -n "$autopilot_prompt_json" ] && echo "$autopilot_prompt_json" | jq -e . > /dev/null 2>&1; then
+    autopilot_prompt_context=$(echo "$autopilot_prompt_json" | jq -r '.hookSpecificOutput.additionalContext // empty' 2>/dev/null)
+  fi
+
+  additional_context="$wake_up_context"
+  if [ -n "$autopilot_prompt_context" ]; then
+    if [ -n "$additional_context" ]; then
+      additional_context="$additional_context
+
+$autopilot_prompt_context"
+    else
+      additional_context="$autopilot_prompt_context"
+    fi
+  fi
+
   # Output as JSON with systemMessage so Claude sees it in context
-  if [ -n "$wake_up_context" ]; then
-    jq -nc --arg systemMessage "$context" --arg additionalContext "$wake_up_context" '{systemMessage: $systemMessage, hookSpecificOutput: {hookEventName: "SessionStart", additionalContext: $additionalContext}}'
+  if [ -n "$additional_context" ]; then
+    jq -nc --arg systemMessage "$context" --arg additionalContext "$additional_context" '{systemMessage: $systemMessage, hookSpecificOutput: {hookEventName: "SessionStart", additionalContext: $additionalContext}}'
   else
     jq -nc --arg systemMessage "$context" '{systemMessage: $systemMessage}'
   fi
