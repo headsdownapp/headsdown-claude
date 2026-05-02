@@ -101,6 +101,34 @@ describe("autopilot hooks", () => {
     });
   });
 
+  it("session-start emits wake-up additionalContext with the existing systemMessage", async () => {
+    await cp("hooks/session-start.sh", join(tempDir, "hooks", "session-start.sh"));
+    await chmod(join(tempDir, "hooks", "session-start.sh"), 0o755);
+    await mkdir(join(tempDir, "dist"));
+    await writeFile(
+      join(tempDir, "dist", "cli.js"),
+      `const command = process.argv[2]; const sub = process.argv[3];
+if (command === "status") console.log(JSON.stringify({ contract: { mode: "online" }, availability: { inReachableHours: true, wrapUpGuidance: {} }, summary: "Mode: online", wrapUpInstruction: null }));
+else if (command === "action-marker") console.log("null");
+else if (command === "next-window") console.log("null");
+else if (command === "digest-count") console.log("0");
+else if (command === "continuation") process.exit(1);
+else if (command === "autopilot" && sub === "wake-up") console.log(JSON.stringify({ hookSpecificOutput: { hookEventName: "SessionStart", additionalContext: "Wake-up digest ready." } }));
+else process.exit(0);`,
+    );
+
+    const result = await execFileAsync("bash", [join(tempDir, "hooks", "session-start.sh")], {
+      env: { ...process.env, CLAUDE_PLUGIN_ROOT: tempDir },
+    });
+    const output = JSON.parse(result.stdout);
+
+    expect(output.systemMessage).toContain("Axis 1");
+    expect(output.hookSpecificOutput).toEqual({
+      hookEventName: "SessionStart",
+      additionalContext: "Wake-up digest ready.",
+    });
+  });
+
   it("invokes the autopilot detect-deferral CLI route", async () => {
     await mkdir(join(tempDir, "dist"));
     const capturePath = join(tempDir, "argv.txt");

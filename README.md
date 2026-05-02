@@ -369,7 +369,7 @@ Default capture is enabled for `offline` mode. `limited` mode capture is opt-in 
 }
 ```
 
-If `patterns` is omitted or invalid, built-in defaults are used. Defaults cover `[DEFER]`, `[NEEDS_USER]`, `[NEEDS_DECISION]`, `should I`, `would you like`, `do you want`, `awaiting your decision`, `let me know`, `please confirm`, `which would you prefer`, and trailing second-person questions. Nudge text uses the SDK classifier prompt fragments and escalation helper so local policy language stays aligned with the shared classifier taxonomy.
+If `patterns` is omitted or invalid, built-in defaults are used. Defaults cover `[DEFER]`, `[NEEDS_USER]`, `[NEEDS_DECISION]`, `should I`, `would you like`, `do you want`, `awaiting your decision`, `let me know`, `please confirm`, `which would you prefer`, and trailing second-person questions. Nudge text uses the SDK classifier prompt fragments and escalation helper so local policy language stays aligned with the shared classifier taxonomy. When SessionStart observes a return to online mode, the wake-up handler can inject a derived-facts digest that points the user to `headsdown_deferred` for review and resolution. The digest shows counts, buckets, flags, and timestamps only.
 
 ## Data Transparency
 
@@ -377,7 +377,7 @@ This plugin is a thin wrapper around the [HeadsDown SDK](https://github.com/head
 
 **What is sent:** Task descriptions and scope estimates (when you submit proposals), metadata-only agent-run events, deferred-decision metadata, your API key for authentication, and actor context metadata (`source`, `agentId`, `sessionId`, `workspaceRef`) for delegated authorization paths.
 
-**What is received:** Your availability status, execution directive, task verdicts, and digest summaries (aggregated notifications).
+**What is received:** Your availability status, execution directive, task verdicts, digest summaries (aggregated notifications), and metadata-only deferred-decision events for review.
 
 **What is stored locally:** Your API key at `~/.config/headsdown/credentials.json` (0600 permissions). Continuation artifacts at `~/.config/headsdown/continuation.json` (0600 permissions, consumed on next session load). Session-scoped box deadlines at `~/.config/headsdown/time-box-<session-hash>.json` (0600 permissions), containing the session hash plus timestamp, duration, schema, and source metadata. Autopilot state at `~/.config/headsdown/autopilot-state.json` (0600 permissions), containing only mode cache metadata, counters, cooldown timestamps, local dedupe keys, and surfaced decision IDs.
 

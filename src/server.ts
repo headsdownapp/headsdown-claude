@@ -18,6 +18,7 @@ import {
 import { getAgentControlOverviewCompat, renderHeadsDownCall } from "./agent-control.js";
 import { reportRunOutcome, reportRunResumed, reportRunStarted } from "./agent-run-events.js";
 import { getActiveRunStateForSession } from "./agent-run-state.js";
+import { handleDeferredTool } from "./headsdown-deferred-tool.js";
 import {
   applyCanonicalAction,
   APPLY_HEADSDOWN_ACTION_MUTATION,
@@ -298,6 +299,31 @@ export function createServer(): Server {
         },
       },
       {
+        name: "headsdown_deferred",
+        description:
+          "HeadsDown: review and resolve metadata-only deferred decisions captured during autopilot runs. " +
+          "Actions: list, view, approve, override, refine, dismiss. Outputs derived facts only and never returns raw transcript or question text.",
+        inputSchema: {
+          type: "object" as const,
+          properties: {
+            action: {
+              type: "string",
+              enum: ["list", "view", "approve", "override", "refine", "dismiss"],
+              description: "list (default), view, or resolve a deferred decision.",
+            },
+            decision_id: {
+              type: "string",
+              description: "Deferred decision id for view or resolution actions.",
+            },
+            latest: {
+              type: "number",
+              description: "Limit to N recent event records before filtering. Defaults to 50.",
+            },
+          },
+          required: [],
+        },
+      },
+      {
         name: "headsdown_digest",
         description:
           "View or dismiss the user's HeadsDown digest: aggregated notifications and messages " +
@@ -503,6 +529,8 @@ export function createServer(): Server {
           return await handlePropose((args ?? {}) as Record<string, unknown>);
         case "headsdown_auth":
           return await handleAuth();
+        case "headsdown_deferred":
+          return await handleDeferred((args ?? {}) as Record<string, unknown>);
         case "headsdown_digest":
           return await handleDigest((args ?? {}) as Record<string, unknown>);
         case "headsdown_report":
@@ -736,6 +764,20 @@ async function handleAuth(): Promise<{
   }
 
   return textResult(lines.join("\n"));
+}
+
+async function handleDeferred(args: Record<string, unknown>) {
+  const client = await getClient();
+  if (!client) {
+    return errorResult("Not authenticated with HeadsDown. Run the headsdown_auth tool first.");
+  }
+
+  try {
+    const output = await handleDeferredTool(withActorContext(client, "headsdown_deferred"), args);
+    return textResult(JSON.stringify(output, null, 2));
+  } catch (error) {
+    return errorResult(error instanceof Error ? error.message : String(error));
+  }
 }
 
 async function handleDigest(args: Record<string, unknown>) {

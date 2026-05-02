@@ -149,6 +149,16 @@ if echo "$output" | jq -e . > /dev/null 2>&1; then
     fi
   fi
 
+  wake_up_json=$(node "$CLI" autopilot wake-up 2>/dev/null) || wake_up_json=""
+  wake_up_context=""
+  if [ -n "$wake_up_json" ] && echo "$wake_up_json" | jq -e . > /dev/null 2>&1; then
+    wake_up_context=$(echo "$wake_up_json" | jq -r '.hookSpecificOutput.additionalContext // empty' 2>/dev/null)
+  fi
+
   # Output as JSON with systemMessage so Claude sees it in context
-  jq -nc --arg systemMessage "$context" '{systemMessage: $systemMessage}'
+  if [ -n "$wake_up_context" ]; then
+    jq -nc --arg systemMessage "$context" --arg additionalContext "$wake_up_context" '{systemMessage: $systemMessage, hookSpecificOutput: {hookEventName: "SessionStart", additionalContext: $additionalContext}}'
+  else
+    jq -nc --arg systemMessage "$context" '{systemMessage: $systemMessage}'
+  fi
 fi
