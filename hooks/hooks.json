@@ -55,6 +55,11 @@
         "hooks": [
           {
             "type": "command",
+            "command": "bash -c 'test -n \"${CLAUDE_PLUGIN_ROOT:-}\" && bash \"$CLAUDE_PLUGIN_ROOT/hooks/autopilot-detect-deferral.sh\" || true'",
+            "timeout": 10
+          },
+          {
+            "type": "command",
             "command": "bash ${CLAUDE_PLUGIN_ROOT}/hooks/session-end.sh",
             "timeout": 10
           }

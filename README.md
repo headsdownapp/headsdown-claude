@@ -320,11 +320,13 @@ headsdown-claude/
 │   ├── hooks.json            # Hook configuration
 │   ├── session-start.sh      # Injects availability at session start (SessionStart)
 │   ├── session-end.sh        # Auto-reports outcome at session end (Stop)
+│   ├── autopilot-detect-deferral.sh # Records metadata-only deferrals (Stop)
 │   ├── check-availability.sh # Gates file modifications by mode (PreToolUse)
 │   ├── post-tool-use.sh      # Tracks file modification count (PostToolUse)
 │   └── pre-compact.sh        # Preserves proposal context before compaction (PreCompact)
 ├── .mcp.json                 # MCP server config
 ├── src/
+│   ├── autopilot/            # Local autopilot state, deferral detection, and CLI handlers
 │   ├── index.ts              # MCP server entry point
 │   ├── server.ts             # Tool handlers (9 tools)
 │   └── cli.ts                # Lightweight CLI for hooks/commands
@@ -340,16 +342,38 @@ headsdown-claude/
 |----------|---------|-------------|
 | `HEADSDOWN_API_URL` | `https://headsdown.app` | API endpoint (for development) |
 | `HEADSDOWN_API_KEY` | (from credentials file) | Override the stored API key |
+| `HEADSDOWN_AUTOPILOT_CONFIG_PATH` | `~/.config/headsdown/autopilot-config.json` | Override the local autopilot deferral config path |
+| `HEADSDOWN_AUTOPILOT_STATE_PATH` | `~/.config/headsdown/autopilot-state.json` | Override the local autopilot state path |
+
+### Autopilot deferral detection
+
+Autopilot deferral capture is local-first. The Stop hook reads the last assistant turn, checks the current availability mode, and records a metadata-only deferred-decision event when a configurable pattern matches. Raw assistant text stays local and is never sent in the event payload.
+
+Default capture is enabled for `offline` mode. `limited` mode capture is opt-in with `includeLimitedMode`.
+
+```json
+{
+  "enabled": true,
+  "includeLimitedMode": false,
+  "defaultUrgencyBucket": "normal",
+  "modeCacheMs": 60000,
+  "patterns": [
+    { "key": "needs_decision", "pattern": "NEEDS_DECISION", "urgencyBucket": "high" }
+  ]
+}
+```
+
+If `patterns` is omitted or invalid, built-in defaults are used. Defaults cover `[DEFER]`, `[NEEDS_USER]`, `[NEEDS_DECISION]`, `should I`, `would you like`, `do you want`, `awaiting your decision`, `let me know`, `please confirm`, `which would you prefer`, and trailing second-person questions.
 
 ## Data Transparency
 
 This plugin is a thin wrapper around the [HeadsDown SDK](https://github.com/headsdownapp/headsdown-sdk). It sends requests only to the HeadsDown API.
 
-**What is sent:** Task descriptions and scope estimates (when you submit proposals), your API key for authentication, and actor context metadata (`source`, `agentId`, `sessionId`, `workspaceRef`) for delegated authorization paths.
+**What is sent:** Task descriptions and scope estimates (when you submit proposals), metadata-only agent-run events, deferred-decision metadata, your API key for authentication, and actor context metadata (`source`, `agentId`, `sessionId`, `workspaceRef`) for delegated authorization paths.
 
 **What is received:** Your availability status, execution directive, task verdicts, and digest summaries (aggregated notifications).
 
-**What is stored locally:** Your API key at `~/.config/headsdown/credentials.json` (0600 permissions). Continuation artifacts at `~/.config/headsdown/continuation.json` (0600 permissions, consumed on next session load). Session-scoped box deadlines at `~/.config/headsdown/time-box-<session-hash>.json` (0600 permissions), containing the session hash plus timestamp, duration, schema, and source metadata.
+**What is stored locally:** Your API key at `~/.config/headsdown/credentials.json` (0600 permissions). Continuation artifacts at `~/.config/headsdown/continuation.json` (0600 permissions, consumed on next session load). Session-scoped box deadlines at `~/.config/headsdown/time-box-<session-hash>.json` (0600 permissions), containing the session hash plus timestamp, duration, schema, and source metadata. Autopilot state at `~/.config/headsdown/autopilot-state.json` (0600 permissions), containing only mode cache metadata, counters, local dedupe keys, and surfaced decision IDs.
 
 No telemetry. No analytics. No third-party requests.
 

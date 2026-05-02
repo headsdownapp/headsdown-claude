@@ -1173,9 +1173,13 @@ describe("Plugin structure", () => {
 
       const stop = config.hooks.Stop[0];
       expect(stop.matcher).toBe("*");
-      expect(stop.hooks[0].command).toContain("${CLAUDE_PLUGIN_ROOT}");
-      expect(stop.hooks[0].command).toContain("session-end.sh");
-      expect(stop.hooks[0].timeout).toBeLessThanOrEqual(10);
+      const sessionEndHook = stop.hooks.find((hook: { command: string }) =>
+        hook.command.includes("session-end.sh"),
+      ) as { command: string; timeout: number } | undefined;
+      expect(sessionEndHook).toBeTruthy();
+      expect(sessionEndHook?.command).toContain("${CLAUDE_PLUGIN_ROOT}");
+      expect(sessionEndHook?.command).toContain("session-end.sh");
+      expect(sessionEndHook?.timeout).toBeLessThanOrEqual(10);
     });
   });
 
