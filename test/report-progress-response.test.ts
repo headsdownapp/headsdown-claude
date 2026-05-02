@@ -301,7 +301,7 @@ describe("buildReportProgressResponse", () => {
     const response = buildReportProgressUnavailableResponse({
       errorCategory: "auth",
       message:
-        "HeadsDown authentication is unavailable. Run /headsdown auth before relying on progress reporting.",
+        "HeadsDown authentication is unavailable. Run /headsdown:auth before relying on progress reporting.",
       details: "Missing credentials",
       timeBox,
       now: new Date("2026-04-29T16:20:00Z"),

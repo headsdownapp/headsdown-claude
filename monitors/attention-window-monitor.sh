@@ -86,7 +86,7 @@ while true; do
     fingerprint="${deadline_at}|${threshold_minutes}|${remaining_minutes}|${effective_source}"
     if [ "$fingerprint" != "$last_fingerprint" ]; then
       if [ "$effective_source" = "time_box" ] && [ "$normalized_key" != "attention_window_closing" ]; then
-        notice="[HeadsDown] Box deadline near. Keep scope tight; the box will not stop work automatically. Use /headsdown:box clear to clear it or /headsdown:box <duration> to replace it."
+        notice="[HeadsDown] Box deadline near. Keep scope tight; the box will not stop work automatically. Use /headsdown:timebox clear to clear it or /headsdown:timebox <duration> to replace it."
       else
         notice="[HeadsDown] Window closing. Use /headsdown:extend to request more time or /headsdown:wrap to pause and summarize."
         if [ "$effective_source" = "time_box" ]; then

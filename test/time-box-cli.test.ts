@@ -107,7 +107,7 @@ describe("time-box CLI", () => {
       reason: "unavailable",
       errorCategory: "auth",
       message:
-        "HeadsDown authentication is unavailable. Run /headsdown auth before relying on progress reporting.",
+        "HeadsDown authentication is unavailable. Run /headsdown:auth before relying on progress reporting.",
       attentionWindowClosing: true,
       attentionWindow: {
         source: "time_box",
@@ -128,7 +128,7 @@ describe("time-box CLI", () => {
       reason: "unavailable",
       errorCategory: "auth",
       message:
-        "HeadsDown authentication is unavailable. Run /headsdown auth before relying on progress reporting.",
+        "HeadsDown authentication is unavailable. Run /headsdown:auth before relying on progress reporting.",
       attentionWindowClosing: false,
       attentionWindow: null,
     });

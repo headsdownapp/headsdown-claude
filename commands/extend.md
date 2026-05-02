@@ -1,5 +1,6 @@
 ---
-description: Extend the current attention window by applying allow_for_duration to the active HeadsDown run
+description: Ask HeadsDown for more time on the current run. Defaults to 15 minutes.
+argument-hint: "[minutes]"
 ---
 
 # HeadsDown Extend

@@ -1,5 +1,5 @@
 ---
-description: Wrap the current attention-window-closing run by applying pause_and_summarize with a privacy-safe handoff
+description: Pause the current run cleanly with a handoff note for next session
 ---
 
 # HeadsDown Wrap

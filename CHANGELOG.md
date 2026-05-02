@@ -8,6 +8,9 @@
 - Documented the `headsdown_deferred` MCP tool in the README and corrected the tool count.
 - Clarified that plugin config (`trustLevel`, `sensitivePaths`, `calibration`) lives at `~/.config/headsdown/config.json` as a flat JSON object.
 - Refreshed install instructions to lead with the marketplace flow and document the `--plugin-dir` development path.
+- Renamed `/headsdown:headsdown` to dedicated `/headsdown:status` and `/headsdown:auth` commands so the slash menu reads cleanly.
+- Renamed `/headsdown:box` to `/headsdown:timebox` so the verb is self-explanatory in the slash menu.
+- Rewrote slash command descriptions to drop internal jargon (`attention-window-closing`, `pause_and_summarize`, `allow_for_duration`, `metadata-only deferred decisions`) in favor of plain user-facing language.
 
 ## 0.2.0
 
@@ -16,7 +19,7 @@
 - Added `UserPromptSubmit` hook that injects fresh per-mode SDK-rendered autopilot policy fragments before each turn.
 - Added `AskUserQuestion` PreToolUse intercept: denies the ask in autopilot mode and tells Claude to defer instead.
 - Added autopilot wake-up digest: when SessionStart sees a return to online mode it surfaces counts, buckets, and timestamps for review through `headsdown_deferred`.
-- Added `/headsdown:box`, `/headsdown:extend`, and `/headsdown:wrap` slash commands plus `time-box` CLI for session-scoped local deadlines.
+- Added `/headsdown:timebox`, `/headsdown:extend`, and `/headsdown:wrap` slash commands plus `time-box` CLI for session-scoped local deadlines.
 - Added attention-window-closing call handling: a plugin monitor polls during active runs and emits a notification when a new warning fingerprint appears.
 - Added HeadsDown call rendering and Claude-action-to-HeadsDown-action mapping so directives like "Off the clock" and "Keep it tight" surface in Claude output.
 - Added off-clock queue flow and privacy-safe Claude run progress reporting.

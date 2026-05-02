@@ -68,7 +68,7 @@ Claude does not stop. It gets wrap-up guidance: finish the current slice, avoid 
 You can also set a local deadline for the current Claude session:
 
 ```text
-/headsdown:box 30m
+/headsdown:timebox 30m
 ```
 
 ### 3. Autopilot when you are away
@@ -107,7 +107,7 @@ In Claude Code, add this repo as a marketplace and install the plugin:
 /plugin install headsdown@headsdown
 ```
 
-The marketplace ships with a built `dist/`, so no Node toolchain is required. After install, run `/headsdown auth` to connect your account.
+The marketplace ships with a built `dist/`, so no Node toolchain is required. After install, run `/headsdown:auth` to connect your account.
 
 ### From a local checkout (development)
 
@@ -133,7 +133,7 @@ After editing source, rerun `npm run build` and use `/reload-plugins` inside Cla
 Authenticate with HeadsDown after installing:
 
 ```
-/headsdown auth
+/headsdown:auth
 ```
 
 Or ask Claude: "Run headsdown_auth to connect my HeadsDown account"
@@ -242,13 +242,14 @@ This allows Claude to include in-progress context in its compaction summary so i
 ### Slash Commands
 
 Quick slash commands for direct access:
-- `/headsdown` or `/headsdown status` - See your current availability
-- `/headsdown auth` - Authenticate with HeadsDown
-- `/headsdown:box <duration>` - Declare a session-scoped local deadline like `30m`, `45m`, `1h`, or `1h30m`
-- `/headsdown:box status` - Show the active box deadline, remaining time, and warning threshold
-- `/headsdown:box clear` - Clear the local box so future warnings use backend-derived attention-window behavior when available
+- `/headsdown:status` - See your current availability, mode, and execution policy
+- `/headsdown:auth` - Authenticate with HeadsDown via Device Flow
+- `/headsdown:timebox <duration>` - Declare a session-scoped local deadline like `30m`, `45m`, `1h`, or `1h30m`
+- `/headsdown:timebox status` - Show the active box deadline, remaining time, and warning threshold
+- `/headsdown:timebox clear` - Clear the local box so future warnings use backend-derived attention-window behavior when available
 - `/headsdown:extend [minutes]` - Apply `allow_for_duration` to an active window-closing run (defaults to 15)
 - `/headsdown:wrap` - Apply `pause_and_summarize` with a privacy-safe handoff for an active window-closing run
+- `/headsdown:wake-up` - Review metadata-only deferred decisions captured during autopilot
 
 ### `headsdown` Skill
 

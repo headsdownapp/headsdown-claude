@@ -138,7 +138,7 @@ if [ "$attention_window_closing" = "true" ]; then
   attention_window_source=$(echo "$progress_json" | jq -r '.attentionWindow.source // empty' 2>/dev/null || echo "")
 
   if [ "$attention_window_source" = "time_box" ] && [ "$wrap_supported" != "true" ] && [ "$allow_duration_supported" != "true" ]; then
-    attention_context="HeadsDown box warning: a self-declared local box deadline is active. Keep scope tight before the deadline; the box will not stop work automatically when it passes. Use /headsdown:box clear to clear it or /headsdown:box <duration> to replace it."
+    attention_context="HeadsDown box warning: a self-declared local box deadline is active. Keep scope tight before the deadline; the box will not stop work automatically when it passes. Use /headsdown:timebox clear to clear it or /headsdown:timebox <duration> to replace it."
 
     append_context "Deadline" "$deadline_at"
     append_context "Remaining minutes" "$remaining_minutes"
@@ -146,7 +146,7 @@ if [ "$attention_window_closing" = "true" ]; then
     append_context "Current box hints" "$hints_text"
 
     if [ "$TOOL_TYPE" = "write" ]; then
-      message="$message Box deadline is near. Use /headsdown:box clear to clear it or /headsdown:box <duration> to replace it."
+      message="$message Box deadline is near. Use /headsdown:timebox clear to clear it or /headsdown:timebox <duration> to replace it."
     fi
   else
     attention_context="HeadsDown call: Window closing. Do not autonomously call headsdown_apply_action with action_key pause_and_summarize for this call. The user must invoke /headsdown:wrap explicitly. You may call headsdown_apply_action with action_key allow_for_duration only if the user explicitly asks for an extension."
@@ -183,10 +183,10 @@ if [ "$attention_window_closing" = "true" ]; then
 fi
 
 if [ -n "$progress_time_box_error" ]; then
-  time_box_error_context="HeadsDown box state warning: ${progress_time_box_error}. Use /headsdown:box clear to clear local box state or /headsdown:box <duration> to replace it."
+  time_box_error_context="HeadsDown box state warning: ${progress_time_box_error}. Use /headsdown:timebox clear to clear local box state or /headsdown:timebox <duration> to replace it."
   append_additional_context "$time_box_error_context"
   if [ "$TOOL_TYPE" = "write" ]; then
-    message="$message HeadsDown box state could not be read. Use /headsdown:box clear or /headsdown:box <duration> to replace it."
+    message="$message HeadsDown box state could not be read. Use /headsdown:timebox clear or /headsdown:timebox <duration> to replace it."
   fi
 fi
 

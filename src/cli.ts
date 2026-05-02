@@ -95,7 +95,7 @@ async function status() {
   } catch (error) {
     availabilityError =
       error instanceof AuthError
-        ? `HeadsDown authentication is unavailable. Run /headsdown auth before relying on status.`
+        ? `HeadsDown authentication is unavailable. Run /headsdown:auth before relying on status.`
         : `HeadsDown status is unavailable: ${safeErrorMessage(error)}`;
   }
 
@@ -604,7 +604,7 @@ async function reportProgress() {
         ...buildReportProgressUnavailableResponse({
           errorCategory: authFailure ? "auth" : "unexpected",
           message: authFailure
-            ? "HeadsDown authentication is unavailable. Run /headsdown auth before relying on progress reporting."
+            ? "HeadsDown authentication is unavailable. Run /headsdown:auth before relying on progress reporting."
             : "HeadsDown progress reporting is unavailable. Check the included details or try again later.",
           details: safeErrorMessage(error),
           activeRun,

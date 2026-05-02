@@ -134,7 +134,7 @@ describe("post-tool-use hook", () => {
     expect(payload.systemMessage).toContain("HeadsDown box state could not be read");
     expect(payload.hookSpecificOutput.additionalContext).toContain("HeadsDown box state warning");
     expect(payload.hookSpecificOutput.additionalContext).toContain("file is corrupt");
-    expect(payload.hookSpecificOutput.additionalContext).toContain("/headsdown:box clear");
+    expect(payload.hookSpecificOutput.additionalContext).toContain("/headsdown:timebox clear");
   });
 
   it("surfaces report-progress command failures", async () => {
@@ -178,7 +178,7 @@ describe("post-tool-use hook", () => {
           reported: false,
           reason: "unavailable",
           errorCategory: "auth",
-          message: "HeadsDown authentication is unavailable. Run /headsdown auth before relying on progress reporting.",
+          message: "HeadsDown authentication is unavailable. Run /headsdown:auth before relying on progress reporting.",
           details: "Missing credentials",
           availabilityError: "Could not query HeadsDown availability for wrap-up guidance: network down",
           progressReportError: "Could not send HeadsDown progress telemetry."
@@ -295,7 +295,7 @@ describe("post-tool-use hook", () => {
     expect(payload.systemMessage).not.toContain("/headsdown:extend");
     expect(payload.systemMessage).not.toContain("/headsdown:wrap");
     expect(payload.hookSpecificOutput.additionalContext).toContain("HeadsDown box warning");
-    expect(payload.hookSpecificOutput.additionalContext).toContain("/headsdown:box clear");
+    expect(payload.hookSpecificOutput.additionalContext).toContain("/headsdown:timebox clear");
     expect(payload.hookSpecificOutput.additionalContext).not.toContain("Target run_id");
   });
 });
@@ -415,7 +415,7 @@ describe("attention-window monitor", () => {
     expect(notices).toHaveLength(1);
     expect(notices[0]).not.toContain("/headsdown:extend");
     expect(notices[0]).not.toContain("/headsdown:wrap");
-    expect(notices[0]).toContain("/headsdown:box clear");
+    expect(notices[0]).toContain("/headsdown:timebox clear");
     expect(notices[0]).toContain("Remaining minutes: 10");
     expect(notices[0]).toContain("self-declared box is active");
   });

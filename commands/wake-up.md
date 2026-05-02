@@ -1,7 +1,7 @@
 ---
-description: Review metadata-only deferred decisions captured during autopilot
+description: Review the questions Claude set aside while you were away
 allowed-tools: Bash(node:*), mcp__headsdown__headsdown_deferred
-argument-hint: [list|decision_id]
+argument-hint: "[list|decision_id]"
 ---
 
 # HeadsDown Wake-Up

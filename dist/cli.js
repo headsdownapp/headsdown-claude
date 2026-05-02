@@ -5834,7 +5834,7 @@ async function status() {
     }
     overview = await getAgentControlOverviewCompat(actorClient);
   } catch (error) {
-    availabilityError = error instanceof AuthError ? `HeadsDown authentication is unavailable. Run /headsdown auth before relying on status.` : `HeadsDown status is unavailable: ${safeErrorMessage2(error)}`;
+    availabilityError = error instanceof AuthError ? `HeadsDown authentication is unavailable. Run /headsdown:auth before relying on status.` : `HeadsDown status is unavailable: ${safeErrorMessage2(error)}`;
   }
   const renderedHeadsDownCall = overview?.headsdownCall ? renderHeadsDownCall(overview.headsdownCall) : null;
   const currentRun = resolveCurrentRunContext({ activeRun, overview });
@@ -6221,7 +6221,7 @@ async function reportProgress() {
       JSON.stringify({
         ...buildReportProgressUnavailableResponse({
           errorCategory: authFailure ? "auth" : "unexpected",
-          message: authFailure ? "HeadsDown authentication is unavailable. Run /headsdown auth before relying on progress reporting." : "HeadsDown progress reporting is unavailable. Check the included details or try again later.",
+          message: authFailure ? "HeadsDown authentication is unavailable. Run /headsdown:auth before relying on progress reporting." : "HeadsDown progress reporting is unavailable. Check the included details or try again later.",
           details: safeErrorMessage2(error),
           activeRun,
           timeBox: timeBoxLoad.state

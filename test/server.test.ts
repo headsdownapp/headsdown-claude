@@ -1063,7 +1063,7 @@ describe("Plugin structure", () => {
       const content = await readFile(skillPath, "utf-8");
 
       expect(content).toContain("Self-Declared Deadlines (Box)");
-      expect(content).toContain("/headsdown:box <duration>");
+      expect(content).toContain("/headsdown:timebox <duration>");
       expect(content).toContain("session-scoped");
       expect(content).toContain("does not stop the agent");
     });
@@ -1636,9 +1636,9 @@ describe("Plugin structure", () => {
     });
   });
 
-  describe("commands/headsdown.md", () => {
+  describe("commands/status.md", () => {
     it("exists with valid frontmatter", async () => {
-      const cmdPath = join(import.meta.dirname, "..", "commands", "headsdown.md");
+      const cmdPath = join(import.meta.dirname, "..", "commands", "status.md");
       const content = await readFile(cmdPath, "utf-8");
 
       expect(content).toMatch(/^---\n/);
@@ -1647,26 +1647,28 @@ describe("Plugin structure", () => {
     });
 
     it("references the CLI for live context", async () => {
-      const cmdPath = join(import.meta.dirname, "..", "commands", "headsdown.md");
+      const cmdPath = join(import.meta.dirname, "..", "commands", "status.md");
       const content = await readFile(cmdPath, "utf-8");
 
       expect(content).toContain("CLAUDE_PLUGIN_ROOT");
       expect(content).toContain("dist/cli.js");
     });
+  });
 
-    it("handles both status and auth arguments", async () => {
-      const cmdPath = join(import.meta.dirname, "..", "commands", "headsdown.md");
+  describe("commands/auth.md", () => {
+    it("exists with valid frontmatter and invokes the auth MCP tool", async () => {
+      const cmdPath = join(import.meta.dirname, "..", "commands", "auth.md");
       const content = await readFile(cmdPath, "utf-8");
 
-      expect(content).toContain("status");
-      expect(content).toContain("auth");
-      expect(content).toContain("$ARGUMENTS");
+      expect(content).toMatch(/^---\n/);
+      expect(content).toContain("description:");
+      expect(content).toContain("headsdown_auth");
     });
   });
 
-  describe("commands/box.md", () => {
-    it("documents local box set, status, and clear behavior", async () => {
-      const cmdPath = join(import.meta.dirname, "..", "commands", "box.md");
+  describe("commands/timebox.md", () => {
+    it("documents local time-box set, status, and clear behavior", async () => {
+      const cmdPath = join(import.meta.dirname, "..", "commands", "timebox.md");
       const content = await readFile(cmdPath, "utf-8");
 
       expect(content).toMatch(/^---\n/);
