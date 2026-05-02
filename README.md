@@ -1,17 +1,100 @@
 # headsdown-claude
 
-[HeadsDown](https://headsdown.app) run-governance plugin for Claude Code. It keeps Claude productive inside real-world boundaries like scope, time, off-clock windows, and approval moments.
+Claude Code is at its best when you can hand it a real job and walk away. The failure mode is that it still acts like you are always there to answer the next question, approve the next tangent, or notice when a small fix has turned into a bigger one.
+
+HeadsDown turns your availability into runtime instructions for Claude Code.
+
+If you are at the keyboard, Claude gets timing and scope guidance so it can finish cleanly. If you are focused, Claude knows not to interrupt unless it matters. If you are away, Claude shifts into autopilot: keep moving when it is safe, defer human-only decisions, and leave you a clean review queue instead of stalling.
 
 Claude Code controls the model. HeadsDown controls the run.
 
-When installed, HeadsDown helps Claude:
-1. **Keep scope tight** by checking work against approved slices and warning before scope drifts
-2. **Queue non-urgent asks off the clock** so evening and weekend interruptions wait for the next work window
-3. **Use approval gates** before broad or risky changes
-4. **Pause and save handoffs** when a run should stop or narrow before new work starts
-5. **Resume without rework** via continuation artifacts saved at wrap-up
-6. **Report outcomes** so future calls improve based on results, not raw content
-7. **Gate interruptions** by checking whether it is the right moment to ask you mid-run
+By default, HeadsDown does **not** receive prompts, source code, file contents, file paths, repository names, branch names, terminal output, test logs, or message contents.
+
+## The pitch
+
+AI agents should feel like responsible teammates, not clever processes that need babysitting.
+
+Today, most coding agents fail in two ordinary ways:
+
+- They interrupt you for tiny choices they could have routed around.
+- They keep expanding the job until the original task is no longer recognizable.
+
+HeadsDown sits at those decision points. It tells Claude what kind of run this is, how much room it has, and what to do when it hits uncertainty.
+
+That gives Claude a better set of defaults:
+
+- Keep going when the next step is safe.
+- Stay inside the approved slice.
+- Ask only when the interruption is worth it.
+- Save non-urgent questions for later.
+- Wrap up before your time window closes.
+- Leave a continuation note when the work should pause.
+
+The goal is not to slow Claude down. The goal is to let Claude run longer without becoming reckless, noisy, or stuck.
+
+## The story
+
+You ask Claude to fix a bug before your next meeting. The first few steps are easy: reproduce it, patch it, run the focused test.
+
+Then the real workflow starts. A related file looks suspicious. A test failure might be flaky. A dependency update would probably help. Claude could ask you, keep digging, or package the current fix.
+
+Without HeadsDown, Claude guesses. Sometimes it pings you for a small decision while you are not available. Sometimes it wanders into a larger refactor. Sometimes it stops and waits, even though there was safe work left to do.
+
+With HeadsDown, Claude gets the missing context:
+
+- If you are available, ask for approval before expanding scope.
+- If your time is almost up, finish the current slice and save the rest.
+- If you are offline, defer the question and keep going with safe, reversible work.
+- If the work crosses the approved plan, stop and re-propose instead of drifting.
+
+That is the product: Claude keeps momentum, and you keep control.
+
+## What Claude gets
+
+### 1. A cleaner start for meaningful work
+
+Before Claude starts meaningful work, it can ask HeadsDown whether the run should start now and how tightly it should stay scoped.
+
+For bigger tasks, Claude can propose a short plan first: what it intends to do, roughly how long it should take, and how many files it expects to touch. Once approved, that plan becomes the guardrail for the run.
+
+If the work grows beyond the plan, Claude warns you and asks for a new plan instead of silently expanding the task.
+
+### 2. A warning before your time runs out
+
+When you are actively working with Claude, HeadsDown helps Claude notice when your available time is almost up.
+
+Claude does not stop. It gets wrap-up guidance: finish the current slice, avoid opening new threads, and save a handoff for anything deferred.
+
+You can also set a local deadline for the current Claude session:
+
+```text
+/headsdown:box 30m
+```
+
+### 3. Autopilot when you are away
+
+When you are away, off the clock, or not available to answer turn-by-turn questions, Claude gets non-blocking autopilot guidance.
+
+That means:
+
+- Keep the run moving when it is safe.
+- Stay inside the approved plan when one exists.
+- Use the smallest safe slice when no plan has been approved yet.
+- Save concise review notes for decisions that should wait for you.
+
+This is the important part: HeadsDown does not make Claude stall faster. It helps Claude defer and continue.
+
+### 4. Guardrails before risky changes
+
+HeadsDown can warn or block file-changing tool calls based on your trust setting and current availability.
+
+For example, it can warn before Claude changes sensitive paths like `.env*`, `.ssh/*`, `package.json`, `Dockerfile*`, or `.github/**`. It can also block changes when your current rules say Claude should not proceed without approval.
+
+### 5. A handoff when the run should stop
+
+When a run reaches the end of the session, moves into wrap-up mode, or needs to pause for the next work window, Claude can save a continuation artifact.
+
+The next session can load that artifact and resume from the actual stopping point instead of rediscovering the work from chat history.
 
 ## Install
 
@@ -52,19 +135,17 @@ This starts a Device Flow: you visit a URL, enter a code, and the API key is sav
 
 ## Why HeadsDown in Claude Code
 
-HeadsDown is not a replacement for Claude model selection. Claude Code already handles Anthropic model behavior, including `/auto`.
+Claude Code already knows how to write, edit, test, and reason about code. HeadsDown adds the missing runtime context: whether now is a good time to ask, whether the task is still the task you approved, and whether Claude should keep going or package a clean handoff.
 
-HeadsDown value in Claude is run governance:
-- scope control
-- off-clock queueing
-- approval gates
-- pause and handoff
-- ready-to-resume continuity
-- privacy-safe outcome reporting
+That matters most in the boring moments that usually break agent workflows:
 
-Canonical product language and UX guidance live in:
-- [AGENT_CONTROL_BRAND_LANGUAGE.md](https://github.com/headsdownapp/heads_down/blob/main/docs/AGENT_CONTROL_BRAND_LANGUAGE.md)
-- [AGENT_CONTROL_HIGH_FIDELITY_UX.md](https://github.com/headsdownapp/heads_down/blob/main/docs/AGENT_CONTROL_HIGH_FIDELITY_UX.md)
+- Claude has a small question while you are offline.
+- A quick fix starts touching more files than expected.
+- Your available work window is almost over.
+- A risky edit needs approval before it becomes real.
+- A session ends before the work is fully wrapped up.
+
+HeadsDown turns those moments into explicit run decisions instead of relying on Claude to guess.
 
 ## Run Governance Examples
 
@@ -95,8 +176,8 @@ Recommended action: queue_for_morning
 
 Every time Claude Code starts a session, the hook injects your current availability into Claude's context before you say anything:
 
-- **Axis 1** — availability mode (user-set): online/busy/limited/offline
-- **Axis 2** — execution directive (schedule-derived): proceed/proceed_with_caution/defer, with machine-readable `hardLimits`
+- **Axis 1**: availability mode (user-set): online/busy/limited/offline
+- **Axis 2**: execution directive (schedule-derived): proceed/proceed_with_caution/defer, with machine-readable `hardLimits`
 - Whether you're in available hours and which window is active
 - Remaining attention budget in minutes (when a window is ending)
 - Wrap-up execution guidance (when near a deadline)
@@ -110,8 +191,8 @@ If you're not authenticated or the API is unreachable, the hook exits silently (
 
 When a Claude session ends, the hook automatically reports task outcome to HeadsDown:
 
-- `completed` — if the session ended normally with no continuation artifact
-- `partially_completed` — if a continuation artifact exists (work was deferred)
+- `completed`: if the session ended normally with no continuation artifact
+- `partially_completed`: if a continuation artifact exists (work was deferred)
 
 This closes the feedback loop for calibration without requiring Claude to remember to call `headsdown_report`. Manual reporting is still needed for `failed`, `cancelled`, or `timed_out` outcomes.
 
@@ -193,7 +274,7 @@ Nine tools registered via the plugin's MCP server:
 | `source_ref` | No | Ticket number, PR URL, etc. |
 | `delivery_mode` | No | `auto` (default), `wrap_up`, or `full_depth` to override execution policy |
 
-**`headsdown_interrupt`** - Check whether it's appropriate to interrupt the user mid-task. Call this before asking non-critical clarifying questions. Returns `{ allowed, reason, autoResponse }` — if `allowed` is false, use `autoResponse` text instead of asking.
+**`headsdown_interrupt`** - Check whether it's appropriate to interrupt the user mid-task. Call this before asking non-critical clarifying questions. Returns `{ allowed, reason, autoResponse }`. If `allowed` is false, use `autoResponse` text instead of asking.
 
 | Parameter | Required | Description |
 |-----------|----------|-------------|
