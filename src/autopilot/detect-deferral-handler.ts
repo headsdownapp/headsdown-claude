@@ -4,6 +4,8 @@ import { homedir } from "node:os";
 import { HeadsDownClient, ProposalStateStore } from "@headsdown/sdk";
 import type { ActorContext } from "@headsdown/sdk";
 import { getActiveRunStateForSession, upsertRunState } from "../agent-run-state.js";
+import { evaluateAntiStuck } from "./anti-stuck.js";
+import { claudeCodeIntegrationCapabilities } from "./integration-capabilities.js";
 import type { AgentRunState } from "../agent-run-state.js";
 import {
   buildLocalSessionSummary,
@@ -31,6 +33,8 @@ export interface DetectDeferralResult {
   skippedReason?: string;
   matchedPattern?: string;
   duplicate?: boolean;
+  stderr?: string;
+  exitCode?: number;
 }
 
 export interface DetectDeferralHandlerOptions {
@@ -56,7 +60,10 @@ export async function runDetectDeferralFromStdin(): Promise<DetectDeferralResult
   if (!raw.trim()) return { recorded: false, skippedReason: "empty_input" };
 
   try {
-    return await handleDetectDeferral(JSON.parse(raw));
+    const result = await handleDetectDeferral(JSON.parse(raw));
+    if (result.stderr) console.error(result.stderr);
+    if (result.exitCode && result.exitCode !== 0) process.exit(result.exitCode);
+    return result;
   } catch {
     return { recorded: false, skippedReason: "invalid_input" };
   }
@@ -155,11 +162,32 @@ export async function handleDetectDeferral(
     })).catch(() => undefined);
   }
 
+  const antiStuck = evaluateAntiStuck({
+    stopHookInput: input,
+    mode,
+    capabilities: claudeCodeIntegrationCapabilities(now),
+    matchedPattern: detection.pattern,
+    autopilotState: currentState,
+    config,
+    runId: eventRunId,
+    toolCallCount: activeRun?.toolCallsCount ?? 0,
+    now,
+  });
+
   await stateStore.update((state) => ({
-    ...state,
+    ...(antiStuck.shouldNudge ? antiStuck.updatedState : state),
     deferredDecisionCount: state.deferredDecisionCount + 1,
     lastSeenDeferralKey: seenKey,
   }));
+
+  if (antiStuck.shouldNudge) {
+    return {
+      recorded: true,
+      matchedPattern: detection.pattern,
+      stderr: antiStuck.nudgeText,
+      exitCode: 2,
+    };
+  }
 
   return { recorded: true, matchedPattern: detection.pattern };
 }

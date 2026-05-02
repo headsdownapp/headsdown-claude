@@ -320,7 +320,8 @@ headsdown-claude/
 │   ├── hooks.json            # Hook configuration
 │   ├── session-start.sh      # Injects availability at session start (SessionStart)
 │   ├── session-end.sh        # Auto-reports outcome at session end (Stop)
-│   ├── autopilot-detect-deferral.sh # Records metadata-only deferrals (Stop)
+│   ├── autopilot-detect-deferral.sh # Records metadata-only deferrals and nudges (Stop)
+│   ├── autopilot-intercept-ask.sh # Defers AskUserQuestion during autopilot (PreToolUse)
 │   ├── check-availability.sh # Gates file modifications by mode (PreToolUse)
 │   ├── post-tool-use.sh      # Tracks file modification count (PostToolUse)
 │   └── pre-compact.sh        # Preserves proposal context before compaction (PreCompact)
@@ -345,11 +346,11 @@ headsdown-claude/
 | `HEADSDOWN_AUTOPILOT_CONFIG_PATH` | `~/.config/headsdown/autopilot-config.json` | Override the local autopilot deferral config path |
 | `HEADSDOWN_AUTOPILOT_STATE_PATH` | `~/.config/headsdown/autopilot-state.json` | Override the local autopilot state path |
 
-### Autopilot deferral detection
+### Autopilot deferral detection and anti-stuck nudges
 
 Autopilot deferral capture is local-first. The Stop hook reads the last assistant turn, checks the current availability mode, and records a metadata-only deferred-decision event when a configurable pattern matches. Raw assistant text stays local and is never sent in the event payload.
 
-Default capture is enabled for `offline` mode. `limited` mode capture is opt-in with `includeLimitedMode`.
+Default capture is enabled for `offline` mode. `limited` mode capture is opt-in with `includeLimitedMode`. When a matching Stop event is recorded, the hook can exit 2 with an anti-stuck nudge so Claude continues without waiting. A separate `AskUserQuestion` PreToolUse hook denies the ask in autopilot mode and tells Claude to defer instead.
 
 ```json
 {
@@ -357,13 +358,18 @@ Default capture is enabled for `offline` mode. `limited` mode capture is opt-in 
   "includeLimitedMode": false,
   "defaultUrgencyBucket": "normal",
   "modeCacheMs": 60000,
+  "nudgeCooldownMs": 5000,
+  "maxConsecutiveNudges": 4,
+  "latitudeDefault": "balanced",
+  "identityActionOverrides": [],
+  "houseRules": [],
   "patterns": [
     { "key": "needs_decision", "pattern": "NEEDS_DECISION", "urgencyBucket": "high" }
   ]
 }
 ```
 
-If `patterns` is omitted or invalid, built-in defaults are used. Defaults cover `[DEFER]`, `[NEEDS_USER]`, `[NEEDS_DECISION]`, `should I`, `would you like`, `do you want`, `awaiting your decision`, `let me know`, `please confirm`, `which would you prefer`, and trailing second-person questions.
+If `patterns` is omitted or invalid, built-in defaults are used. Defaults cover `[DEFER]`, `[NEEDS_USER]`, `[NEEDS_DECISION]`, `should I`, `would you like`, `do you want`, `awaiting your decision`, `let me know`, `please confirm`, `which would you prefer`, and trailing second-person questions. Nudge text uses the SDK classifier prompt fragments and escalation helper so local policy language stays aligned with the shared classifier taxonomy.
 
 ## Data Transparency
 
@@ -373,7 +379,7 @@ This plugin is a thin wrapper around the [HeadsDown SDK](https://github.com/head
 
 **What is received:** Your availability status, execution directive, task verdicts, and digest summaries (aggregated notifications).
 
-**What is stored locally:** Your API key at `~/.config/headsdown/credentials.json` (0600 permissions). Continuation artifacts at `~/.config/headsdown/continuation.json` (0600 permissions, consumed on next session load). Session-scoped box deadlines at `~/.config/headsdown/time-box-<session-hash>.json` (0600 permissions), containing the session hash plus timestamp, duration, schema, and source metadata. Autopilot state at `~/.config/headsdown/autopilot-state.json` (0600 permissions), containing only mode cache metadata, counters, local dedupe keys, and surfaced decision IDs.
+**What is stored locally:** Your API key at `~/.config/headsdown/credentials.json` (0600 permissions). Continuation artifacts at `~/.config/headsdown/continuation.json` (0600 permissions, consumed on next session load). Session-scoped box deadlines at `~/.config/headsdown/time-box-<session-hash>.json` (0600 permissions), containing the session hash plus timestamp, duration, schema, and source metadata. Autopilot state at `~/.config/headsdown/autopilot-state.json` (0600 permissions), containing only mode cache metadata, counters, cooldown timestamps, local dedupe keys, and surfaced decision IDs.
 
 No telemetry. No analytics. No third-party requests.
 

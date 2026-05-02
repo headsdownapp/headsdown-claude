@@ -10,6 +10,9 @@ export interface AutopilotState {
   lastNudgedAt: number | null;
   surfacedDecisionIds: string[];
   deferredDecisionCount: number;
+  consecutiveNudges: number;
+  lastNudgedRunId: string | null;
+  lastNudgedToolCallCount: number | null;
   lastSeenDeferralKey: string | null;
   modeCachedAt: number | null;
   modeCacheValue: Mode | null;
@@ -20,6 +23,9 @@ export const DEFAULT_AUTOPILOT_STATE: AutopilotState = {
   lastNudgedAt: null,
   surfacedDecisionIds: [],
   deferredDecisionCount: 0,
+  consecutiveNudges: 0,
+  lastNudgedRunId: null,
+  lastNudgedToolCallCount: null,
   lastSeenDeferralKey: null,
   modeCachedAt: null,
   modeCacheValue: null,
@@ -74,6 +80,17 @@ function normalizeAutopilotState(value: unknown): AutopilotState {
       ? raw.surfacedDecisionIds.filter((id): id is string => typeof id === "string")
       : [],
     deferredDecisionCount: normalizeCount(raw.deferredDecisionCount),
+    consecutiveNudges: normalizeCount(raw.consecutiveNudges),
+    lastNudgedRunId:
+      typeof raw.lastNudgedRunId === "string" && raw.lastNudgedRunId.trim()
+        ? raw.lastNudgedRunId.trim()
+        : null,
+    lastNudgedToolCallCount:
+      typeof raw.lastNudgedToolCallCount === "number" &&
+      Number.isFinite(raw.lastNudgedToolCallCount) &&
+      raw.lastNudgedToolCallCount >= 0
+        ? Math.floor(raw.lastNudgedToolCallCount)
+        : null,
     lastSeenDeferralKey:
       typeof raw.lastSeenDeferralKey === "string" && raw.lastSeenDeferralKey.trim()
         ? raw.lastSeenDeferralKey.trim()

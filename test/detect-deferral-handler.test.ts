@@ -53,7 +53,12 @@ describe("handleDetectDeferral", () => {
       },
     );
 
-    expect(result).toEqual({ recorded: true, matchedPattern: "explicit_defer_marker" });
+    expect(result).toMatchObject({
+      recorded: true,
+      matchedPattern: "explicit_defer_marker",
+      exitCode: 2,
+    });
+    expect(result.stderr).toContain("Defer this question");
     expect(calls).toHaveLength(1);
     expect(calls[0]).toMatchObject({
       eventType: "deferred_decision.recorded",
@@ -124,6 +129,52 @@ describe("handleDetectDeferral", () => {
       "deferred_decision.recorded",
     ]);
     expect((await stateStore.load()).deferredDecisionCount).toBe(2);
+  });
+
+  it("persists nudge cooldown state across Stop deferrals", async () => {
+    const calls: Record<string, unknown>[] = [];
+    const client = mockClient({ mode: "offline", calls });
+    const stateStore = new AutopilotStateStore(join(tempDir, "cooldown-state.json"));
+    const options = {
+      client,
+      stateStore,
+      activeRunLoader: async () =>
+        activeRun({ runId: "run-cooldown", proposalId: "proposal-cooldown" }),
+      now: new Date("2026-05-01T12:00:00.000Z"),
+    };
+    const firstTranscript = await writeTranscript([
+      {
+        type: "assistant",
+        turnIndex: 1,
+        message: { role: "assistant", content: "Should I continue with A?" },
+      },
+    ]);
+    const secondTranscript = await writeTranscript([
+      {
+        type: "assistant",
+        turnIndex: 2,
+        message: { role: "assistant", content: "Should I continue with B?" },
+      },
+    ]);
+
+    const first = await handleDetectDeferral(
+      { session_id: "session", transcript_path: firstTranscript },
+      options,
+    );
+    const second = await handleDetectDeferral(
+      { session_id: "session", transcript_path: secondTranscript },
+      options,
+    );
+
+    expect(first).toMatchObject({ recorded: true, exitCode: 2 });
+    expect(second).toMatchObject({ recorded: true });
+    expect(second.exitCode).toBeUndefined();
+    expect(await stateStore.load()).toMatchObject({
+      deferredDecisionCount: 2,
+      consecutiveNudges: 1,
+      lastNudgedRunId: "run-cooldown",
+      lastNudgedToolCallCount: 3,
+    });
   });
 
   it("does not record the same run, turn, and pattern twice", async () => {

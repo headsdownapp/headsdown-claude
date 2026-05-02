@@ -1,7 +1,7 @@
 #!/bin/bash
 # HeadsDown Stop hook
 # Captures privacy-safe autopilot deferrals after assistant text turns.
-# Exits silently on any error and must never disrupt session end.
+# Exit 2 is intentional for anti-stuck nudges; other local errors fail open.
 
 set -euo pipefail
 
@@ -16,4 +16,17 @@ if [ ! -f "$CLI" ]; then
   exit 0
 fi
 
-node "$CLI" autopilot detect-deferral 2>/dev/null || exit 0
+stderr_file=$(mktemp)
+set +e
+node "$CLI" autopilot detect-deferral 2>"$stderr_file"
+status=$?
+set -e
+
+if [ "$status" -eq 2 ]; then
+  cat "$stderr_file" >&2
+  rm -f "$stderr_file"
+  exit 2
+fi
+
+rm -f "$stderr_file"
+exit 0

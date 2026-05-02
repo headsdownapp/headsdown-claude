@@ -23,6 +23,16 @@
             "timeout": 10
           }
         ]
+      },
+      {
+        "matcher": "AskUserQuestion",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash -c 'test -n \"${CLAUDE_PLUGIN_ROOT:-}\" && bash \"$CLAUDE_PLUGIN_ROOT/hooks/autopilot-intercept-ask.sh\" || true'",
+            "timeout": 10
+          }
+        ]
       }
     ],
     "PostToolUse": [
@@ -55,7 +65,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "bash -c 'test -n \"${CLAUDE_PLUGIN_ROOT:-}\" && bash \"$CLAUDE_PLUGIN_ROOT/hooks/autopilot-detect-deferral.sh\" || true'",
+            "command": "bash -c 'if [ -z \"${CLAUDE_PLUGIN_ROOT:-}\" ]; then exit 0; fi; bash \"$CLAUDE_PLUGIN_ROOT/hooks/autopilot-detect-deferral.sh\"; status=$?; if [ \"$status\" -eq 2 ]; then exit 2; fi; exit 0'",
             "timeout": 10
           },
           {

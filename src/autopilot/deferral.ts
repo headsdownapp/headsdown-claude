@@ -2,11 +2,26 @@ import { createHash, randomBytes } from "node:crypto";
 import { access, readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { homedir } from "node:os";
-import type { HeadsDownClient, LocalSessionSummary } from "@headsdown/sdk";
+import type {
+  ActionShape,
+  ClassifiedAction,
+  ClassifierEscalationStep,
+  ClassifierLatitude,
+  ClassifierPolicy,
+  EscalationDecision,
+  HeadsDownClient,
+  IntegrationCapabilities,
+  LocalSessionSummary,
+  QuestionCategory,
+} from "@headsdown/sdk";
 import {
+  AUTOPILOT_CLASSIFIER_VERSION,
   LOCAL_SESSION_SUMMARY_VERSION,
   assertLocalSessionSummary,
   assertPrivacySafe,
+  buildClassifierPromptFragments,
+  classifyActionShapeFallback,
+  computeEscalationPath,
 } from "@headsdown/sdk";
 import { reportAgentRunEventCompat } from "../agent-run-reporter.js";
 import type { AgentRunState } from "../agent-run-state.js";
@@ -36,6 +51,11 @@ export interface AutopilotDeferralConfig {
   includeLimitedMode: boolean;
   defaultUrgencyBucket: AutopilotDeferralUrgencyBucket;
   modeCacheMs: number;
+  nudgeCooldownMs: number;
+  maxConsecutiveNudges: number;
+  latitudeDefault: ClassifierLatitude;
+  identityActionOverrides: string[];
+  houseRules: string[];
   patterns: AutopilotDeferralPattern[];
 }
 
@@ -215,6 +235,11 @@ export function normalizeAutopilotDeferralConfig(value: unknown): AutopilotDefer
     includeLimitedMode: raw.includeLimitedMode === true,
     defaultUrgencyBucket: normalizeUrgencyBucket(raw.defaultUrgencyBucket),
     modeCacheMs: normalizePositiveNumber(raw.modeCacheMs, 60_000),
+    nudgeCooldownMs: normalizePositiveNumber(raw.nudgeCooldownMs, 5_000),
+    maxConsecutiveNudges: normalizeCountWithFallback(raw.maxConsecutiveNudges, 4),
+    latitudeDefault: normalizeLatitude(raw.latitudeDefault),
+    identityActionOverrides: normalizeStringArray(raw.identityActionOverrides),
+    houseRules: normalizeStringArray(raw.houseRules),
     patterns: customPatterns.length > 0 ? customPatterns : defaultPatterns,
   };
 }
@@ -287,6 +312,111 @@ function normalizePattern(entry: unknown, index: number): AutopilotDeferralPatte
   }
 }
 
+export function questionCategoryForPattern(patternKey: string): QuestionCategory {
+  if (patternKey.includes("tool") || patternKey.includes("which_would_you_prefer")) {
+    return "tooling_choice";
+  }
+  if (patternKey.includes("confirm") || patternKey.includes("should_i")) {
+    return "approval_request";
+  }
+  if (patternKey.includes("awaiting") || patternKey.includes("recovery")) {
+    return "recovery_decision";
+  }
+  if (patternKey.includes("scope")) {
+    return "scope_clarification";
+  }
+  return "approval_request";
+}
+
+export function buildAskUserActionShape(input: {
+  questionCategory: QuestionCategory;
+  turnsSinceTool?: number;
+  lastToolOutcome?: "succeeded" | "failed" | "unavailable";
+}): ActionShape {
+  return {
+    tool_kind: "interaction.ask_user",
+    question_category: input.questionCategory,
+    recent_tool_context:
+      input.lastToolOutcome && input.lastToolOutcome !== "unavailable"
+        ? {
+            last_tool_kind: "bash",
+            last_tool_outcome: input.lastToolOutcome,
+            turns_since: input.turnsSinceTool ?? 1,
+          }
+        : {
+            last_tool_kind: "none",
+            last_tool_outcome: "unavailable",
+            turns_since: input.turnsSinceTool ?? 1,
+          },
+  };
+}
+
+export function buildClassifierPolicy(config: AutopilotDeferralConfig): ClassifierPolicy {
+  return {
+    classifierVersion: AUTOPILOT_CLASSIFIER_VERSION,
+    latitude: config.latitudeDefault,
+    escalationStrategy: ["try_alternative", "defer_to_end_of_run", "defer_for_human_review"],
+    sandboxPreference: "avoid",
+  };
+}
+
+export function selectEscalationStep(input: {
+  policy: ClassifierPolicy;
+  capabilities: IntegrationCapabilities;
+  classifiedAction: ClassifiedAction;
+  consecutiveNudges: number;
+  maxConsecutiveNudges: number;
+}): EscalationDecision {
+  if (input.consecutiveNudges >= input.maxConsecutiveNudges) {
+    return {
+      steps: ["defer_for_human_review"],
+      reasonCode: "max_consecutive_nudges_reached",
+      version: {
+        level: "none",
+        direction: "match",
+        message: "Classifier version match.",
+        shouldProceed: true,
+        fallbackLatitude: null,
+      },
+    };
+  }
+
+  return computeEscalationPath({
+    classifiedAction: input.classifiedAction,
+    policy: input.policy,
+    capabilities: input.capabilities,
+  });
+}
+
+export function buildAntiStuckNudgeText(input: {
+  policy: ClassifierPolicy;
+  classifiedAction: ClassifiedAction;
+  escalation: { steps: ClassifierEscalationStep[]; reasonCode: string };
+  identityActionOverrides?: string[];
+  houseRules?: string[];
+}): string {
+  const fragments = buildClassifierPromptFragments({
+    latitude: input.policy.latitude,
+    identityActionOverrides: input.identityActionOverrides,
+    houseRules: input.houseRules,
+  });
+  const nextStep = input.escalation.steps[0] ?? "defer_for_human_review";
+
+  return [
+    fragments.fullSystemAddendum,
+    "",
+    `Anti-stuck nudge: apply the policy above and continue without waiting. Classification: ${input.classifiedAction.outcome}. Escalation: ${nextStep}. Reason: ${input.escalation.reasonCode}.`,
+    "Defer this question to the deferred-decision queue and continue with what you can do. Do not wait for the user.",
+    "Privacy reminder: do not repeat raw question text, file paths, terminal output, URLs, code snippets, or transcript content in hosted payloads.",
+  ].join("\n");
+}
+
+export function classifyAskUserPattern(patternKey: string): ClassifiedAction {
+  return classifyActionShapeFallback(
+    buildAskUserActionShape({ questionCategory: questionCategoryForPattern(patternKey) }),
+  );
+}
+
 function normalizeUrgencyBucket(value: unknown): AutopilotDeferralUrgencyBucket {
   return value === "low" || value === "high" || value === "normal" ? value : "normal";
 }
@@ -299,6 +429,28 @@ function normalizeOptionalUrgencyBucket(
 
 function normalizePositiveNumber(value: unknown, fallback: number): number {
   return typeof value === "number" && Number.isFinite(value) && value > 0 ? value : fallback;
+}
+
+function normalizeCountWithFallback(value: unknown, fallback: number): number {
+  if (typeof value !== "number" || !Number.isFinite(value) || value < 0) return fallback;
+  return Math.floor(value);
+}
+
+function normalizeLatitude(value: unknown): ClassifierLatitude {
+  return value === "hold" ||
+    value === "verify" ||
+    value === "balanced" ||
+    value === "cautious" ||
+    value === "lockdown"
+    ? value
+    : "balanced";
+}
+
+function normalizeStringArray(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  return value
+    .filter((entry): entry is string => typeof entry === "string" && entry.trim().length > 0)
+    .map((entry) => entry.trim());
 }
 
 function clampCount(value: number): number {
