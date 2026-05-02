@@ -17,7 +17,5 @@
     "ai-agent",
     "scheduling",
     "deep-work"
-  ],
-  "hooks": "./hooks/hooks.json",
-  "monitors": "./monitors/monitors.json"
+  ]
 }

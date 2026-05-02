@@ -1704,11 +1704,13 @@ describe("Plugin structure", () => {
       const monitorsPath = join(import.meta.dirname, "..", "monitors", "monitors.json");
       const scriptPath = join(import.meta.dirname, "..", "monitors", "attention-window-monitor.sh");
       const raw = await readFile(monitorsPath, "utf-8");
-      const config = JSON.parse(raw);
+      const monitors = JSON.parse(raw);
       const script = await readFile(scriptPath, "utf-8");
 
-      expect(config.monitors).toBeInstanceOf(Array);
-      expect(config.monitors[0].command).toContain("attention-window-monitor.sh");
+      // Claude Code expects monitors.json to be a top-level array, not wrapped
+      // in `{ monitors: [...] }`. See plugin install error for the wrapped form.
+      expect(monitors).toBeInstanceOf(Array);
+      expect(monitors[0].command).toContain("attention-window-monitor.sh");
       expect(script).toContain("attention_window_closing");
       expect(script).toContain("/headsdown:extend");
       expect(script).toContain("/headsdown:wrap");
@@ -1717,14 +1719,22 @@ describe("Plugin structure", () => {
     });
   });
 
-  describe("plugin.json references hooks", () => {
-    it("manifest points to hooks config and monitor config", async () => {
+  describe("plugin.json", () => {
+    it("does not redeclare auto-discovered hook and monitor files", async () => {
       const manifestPath = join(import.meta.dirname, "..", ".claude-plugin", "plugin.json");
       const raw = await readFile(manifestPath, "utf-8");
       const manifest = JSON.parse(raw);
 
-      expect(manifest.hooks).toBe("./hooks/hooks.json");
-      expect(manifest.monitors).toBe("./monitors/monitors.json");
+      // Claude Code auto-loads hooks/hooks.json and monitors/monitors.json from
+      // the standard paths. Redeclaring them in the manifest causes a duplicate
+      // load on /plugin install. The standard files must exist on disk instead.
+      expect(manifest.hooks).toBeUndefined();
+      expect(manifest.monitors).toBeUndefined();
+
+      const hooksPath = join(import.meta.dirname, "..", "hooks", "hooks.json");
+      const monitorsPath = join(import.meta.dirname, "..", "monitors", "monitors.json");
+      await expect(readFile(hooksPath, "utf-8")).resolves.toBeTypeOf("string");
+      await expect(readFile(monitorsPath, "utf-8")).resolves.toBeTypeOf("string");
     });
   });
 });
