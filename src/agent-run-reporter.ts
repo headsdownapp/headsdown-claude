@@ -42,18 +42,20 @@ export async function reportAgentRunEventCompat(
     const eventInput = buildSdkEventInput(input);
 
     if (typeof eventClient.reportAgentRunEvent === "function") {
-      await eventClient.reportAgentRunEvent(eventInput);
-      return true;
+      const result = await eventClient.reportAgentRunEvent(eventInput);
+      return isSuccessfulReportResult(result);
     }
 
     const graphql = getLowLevelGraphQLClient(client);
     if (!graphql) return false;
 
-    await graphql.request(REPORT_AGENT_RUN_EVENT_MUTATION, {
+    const result = await graphql.request(REPORT_AGENT_RUN_EVENT_MUTATION, {
       input: serializeAgentRunEventForGraphQL(eventInput),
     });
 
-    return true;
+    return isSuccessfulReportResult(
+      (result as { reportAgentRunEvent?: unknown } | null)?.reportAgentRunEvent,
+    );
   } catch {
     return false;
   }
@@ -111,6 +113,13 @@ function serializeAgentRunEventForGraphQL(input: Record<string, unknown>): Recor
     privacyMode: "METADATA_ONLY",
     progressPayload: serializedProgress,
   });
+}
+
+function isSuccessfulReportResult(result: unknown): boolean {
+  if (!result || typeof result !== "object") return true;
+  const record = result as Record<string, unknown>;
+  if (!("ok" in record) && !("error" in record)) return true;
+  return record.ok === true && (record.error === null || record.error === undefined);
 }
 
 function stripUndefined<T extends Record<string, unknown>>(value: T): T {

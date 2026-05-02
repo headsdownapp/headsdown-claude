@@ -16,6 +16,7 @@ import { getAgentControlOverviewCompat, renderHeadsDownCall } from "./agent-cont
 import { reportRunOutcome, reportRunProgress } from "./agent-run-events.js";
 import { getActiveRunStateForSession } from "./agent-run-state.js";
 import { LocalActionMarkerStore } from "./headsdown-action-executor.js";
+import { autopilotCli } from "./autopilot/cli.js";
 import { LocalTimeBoxStore } from "./time-box-store.js";
 import {
   buildTimeBoxStatus,
@@ -63,6 +64,8 @@ async function main() {
       return await actionMarker();
     case "time-box":
       return await timeBox();
+    case "autopilot":
+      return await autopilotCli();
     default:
       process.exit(1);
   }
