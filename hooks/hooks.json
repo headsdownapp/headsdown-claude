@@ -13,6 +13,18 @@
         ]
       }
     ],
+    "UserPromptSubmit": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash -c 'if [ -z \"${CLAUDE_PLUGIN_ROOT:-}\" ]; then exit 0; fi; bash \"$CLAUDE_PLUGIN_ROOT/hooks/autopilot-prompt.sh\"'",
+            "timeout": 10
+          }
+        ]
+      }
+    ],
     "PreToolUse": [
       {
         "matcher": "Write|Edit|MultiEdit",

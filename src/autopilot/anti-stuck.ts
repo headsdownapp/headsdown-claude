@@ -66,8 +66,9 @@ export function evaluateAntiStuck(input: AntiStuckEvaluationInput): AntiStuckEva
       policy,
       classifiedAction,
       escalation,
-      identityActionOverrides: input.config.identityActionOverrides,
-      houseRules: input.config.houseRules,
+      identityActionOverrides:
+        policy.identityActionOverrides ?? input.config.identityActionOverrides,
+      houseRules: policy.houseRules ?? input.config.houseRules,
     }),
     updatedState: {
       ...input.autopilotState,

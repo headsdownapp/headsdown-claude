@@ -322,6 +322,7 @@ headsdown-claude/
 │   ├── session-end.sh        # Auto-reports outcome at session end (Stop)
 │   ├── autopilot-detect-deferral.sh # Records metadata-only deferrals and nudges (Stop)
 │   ├── autopilot-intercept-ask.sh # Defers AskUserQuestion during autopilot (PreToolUse)
+│   ├── autopilot-prompt.sh # Injects fresh SDK autopilot policy context (UserPromptSubmit)
 │   ├── check-availability.sh # Gates file modifications by mode (PreToolUse)
 │   ├── post-tool-use.sh      # Tracks file modification count (PostToolUse)
 │   └── pre-compact.sh        # Preserves proposal context before compaction (PreCompact)
@@ -350,7 +351,7 @@ headsdown-claude/
 
 Autopilot deferral capture is local-first. The Stop hook reads the last assistant turn, checks the current availability mode, and records a metadata-only deferred-decision event when a configurable pattern matches. Raw assistant text stays local and is never sent in the event payload.
 
-Default capture is enabled for `offline` mode. `limited` mode capture is opt-in with `includeLimitedMode`. When a matching Stop event is recorded, the hook can exit 2 with an anti-stuck nudge so Claude continues without waiting. A separate `AskUserQuestion` PreToolUse hook denies the ask in autopilot mode and tells Claude to defer instead.
+Default autopilot behavior is enabled for `offline` mode. `limited` mode is opt-in with `includeLimitedMode`. A `UserPromptSubmit` hook reads the current mode and fresh per-mode policy before each turn, then injects the SDK-rendered classifier prompt fragments as Claude `additionalContext`. SessionStart preloads the same addendum for the first turn. When a matching Stop event is recorded, the hook can exit 2 with an anti-stuck nudge so Claude continues without waiting. A separate `AskUserQuestion` PreToolUse hook denies the ask in autopilot mode and tells Claude to defer instead.
 
 ```json
 {
@@ -369,7 +370,7 @@ Default capture is enabled for `offline` mode. `limited` mode capture is opt-in 
 }
 ```
 
-If `patterns` is omitted or invalid, built-in defaults are used. Defaults cover `[DEFER]`, `[NEEDS_USER]`, `[NEEDS_DECISION]`, `should I`, `would you like`, `do you want`, `awaiting your decision`, `let me know`, `please confirm`, `which would you prefer`, and trailing second-person questions. Nudge text uses the SDK classifier prompt fragments and escalation helper so local policy language stays aligned with the shared classifier taxonomy. When SessionStart observes a return to online mode, the wake-up handler can inject a derived-facts digest that points the user to `headsdown_deferred` for review and resolution. The digest shows counts, buckets, flags, and timestamps only.
+If `patterns` is omitted or invalid, built-in defaults are used. Defaults cover `[DEFER]`, `[NEEDS_USER]`, `[NEEDS_DECISION]`, `should I`, `would you like`, `do you want`, `awaiting your decision`, `let me know`, `please confirm`, `which would you prefer`, and trailing second-person questions. Prompt injection and nudge text use the SDK classifier prompt fragments and escalation helper so local policy language stays aligned with the shared classifier taxonomy. Policy is not cached across turns. When SessionStart observes a return to online mode, the wake-up handler can inject a derived-facts digest that points the user to `headsdown_deferred` for review and resolution. The digest shows counts, buckets, flags, and timestamps only.
 
 ## Data Transparency
 
