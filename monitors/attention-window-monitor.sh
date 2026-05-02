@@ -4,7 +4,12 @@
 
 set -euo pipefail
 
-CLI="${CLAUDE_PLUGIN_ROOT}/dist/cli.js"
+# Claude Code substitutes ${CLAUDE_PLUGIN_ROOT} in the command string but does
+# not export it as an env var to monitor processes (hooks do get it). Derive
+# the plugin root from this script's own location so set -u does not bite.
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PLUGIN_ROOT="${CLAUDE_PLUGIN_ROOT:-$(dirname "$SCRIPT_DIR")}"
+CLI="$PLUGIN_ROOT/dist/cli.js"
 if [ ! -f "$CLI" ]; then
   exit 0
 fi
