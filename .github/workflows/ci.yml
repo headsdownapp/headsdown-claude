@@ -28,3 +28,13 @@ jobs:
       - run: npm run build
       - run: npm test
       - run: npm run lint
+
+      # The plugin loads dist/ directly on /plugin install, so the committed
+      # bundle must match the current source. Fail the build if it drifts.
+      - name: Check committed dist/ matches source
+        run: |
+          if ! git diff --quiet --exit-code -- dist/; then
+            echo "::error::dist/ is out of date. Run 'npm run build' and commit the result."
+            git --no-pager diff --stat -- dist/
+            exit 1
+          fi

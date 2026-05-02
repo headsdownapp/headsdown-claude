@@ -1,0 +1,36 @@
+{
+  "name": "headsdown",
+  "owner": {
+    "name": "HeadsDown",
+    "email": "support@headsdown.app",
+    "url": "https://headsdown.app"
+  },
+  "metadata": {
+    "description": "Availability-aware run control for Claude Code. Tells Claude when to keep going, when to defer, and when to wrap up.",
+    "version": "0.2.0"
+  },
+  "plugins": [
+    {
+      "name": "headsdown",
+      "source": "./",
+      "description": "Availability awareness for Claude Code. Checks your focus mode, schedule, and availability before starting tasks. Submits task proposals for verdict (approved/deferred) to respect your focus time.",
+      "version": "0.2.0",
+      "author": {
+        "name": "HeadsDown",
+        "email": "support@headsdown.app",
+        "url": "https://headsdown.app"
+      },
+      "homepage": "https://headsdown.app",
+      "repository": "https://github.com/headsdownapp/headsdown-claude",
+      "license": "MIT",
+      "keywords": [
+        "availability",
+        "focus",
+        "productivity",
+        "ai-agent",
+        "scheduling",
+        "deep-work"
+      ]
+    }
+  ]
+}

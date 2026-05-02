@@ -98,13 +98,20 @@ The next session can load that artifact and resume from the actual stopping poin
 
 ## Install
 
-### From a marketplace (when published)
+### From the HeadsDown marketplace (recommended)
+
+In Claude Code, add this repo as a marketplace and install the plugin:
 
 ```
-/plugin install headsdown
+/plugin marketplace add headsdownapp/headsdown-claude
+/plugin install headsdown@headsdown
 ```
 
-### From a local directory
+The marketplace ships with a built `dist/`, so no Node toolchain is required. After install, run `/headsdown auth` to connect your account.
+
+### From a local checkout (development)
+
+For working on the plugin itself:
 
 ```bash
 git clone https://github.com/headsdownapp/headsdown-claude.git
@@ -113,13 +120,13 @@ npm install
 npm run build
 ```
 
-Then start Claude Code with the plugin:
+Then load the local checkout into Claude Code at startup:
 
 ```bash
 claude --plugin-dir /path/to/headsdown-claude
 ```
 
-Or add it to your settings for permanent use.
+After editing source, rerun `npm run build` and use `/reload-plugins` inside Claude Code to pick up the new bundle without restarting.
 
 ## Setup
 
@@ -257,7 +264,7 @@ Key behaviors the skill teaches:
 
 ### MCP Tools
 
-Nine tools registered via the plugin's MCP server:
+Ten tools registered via the plugin's MCP server:
 
 **`headsdown_status`** - Check your current availability. Returns both axes: `mode` (user-set) and `executionDirective` (schedule-derived with `code`, `summary`, `hardLimits`).
 
@@ -298,6 +305,14 @@ Nine tools registered via the plugin's MCP server:
 |-----------|----------|-------------|
 | `latest` | No | Limit to N most recent summaries (default: 20) |
 
+**`headsdown_deferred`** - Review and resolve metadata-only deferred decisions captured during autopilot runs. Returns derived facts only — never raw transcript or question text.
+
+| Parameter | Required | Description |
+|-----------|----------|-------------|
+| `action` | No | `list` (default), `view`, `approve`, `override`, `refine`, or `dismiss` |
+| `decision_id` | No | Deferred decision id for view or resolution actions |
+| `latest` | No | Limit to N recent event records before filtering (default: 50) |
+
 **`headsdown_grants`** - List/create/revoke delegation grants for actor-scoped authorization.
 
 | Parameter | Required | Description |
@@ -337,14 +352,13 @@ Nine tools registered via the plugin's MCP server:
 
 ## Trust levels
 
-Control how strictly the PreToolUse hook enforces availability. Set in your plugin config:
+Control how strictly the PreToolUse hook enforces availability. Configuration lives at `~/.config/headsdown/config.json` (created on first run with sensible defaults):
 
 ```json
 {
-  "headsdown": {
-    "trustLevel": "advisory",
-    "sensitivePaths": [".env", "credentials.json", "secrets/**"]
-  }
+  "trustLevel": "advisory",
+  "sensitivePaths": [".env", "credentials.json", "secrets/**"],
+  "calibration": true
 }
 ```
 
