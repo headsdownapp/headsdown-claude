@@ -1,4 +1,4 @@
-# headsdown-claude
+# HeadsDown for Claude Code
 
 Claude Code is at its best when you can hand it a real job and walk away. The failure mode is that it still acts like you are always there to answer the next question, approve the next tangent, or notice when a small fix has turned into a bigger one.
 
@@ -483,10 +483,6 @@ claude plugins validate .
 `npm run build` bundles `src/index.ts` and `src/cli.ts` with esbuild into `dist/index.js` and `dist/cli.js`.
 
 The bundle inlines `@headsdown/sdk` so consumers do not install it transitively when they install `headsdown-claude`. `@modelcontextprotocol/sdk` stays external as a runtime dependency.
-
-## Dependency update automation
-
-This repo uses Renovate to keep `@headsdown/sdk` and other routine dependencies current. New SDK releases open bot PRs automatically, and eligible updates can automerge after required CI checks pass. In normal maintenance flow, do not manually edit `@headsdown/sdk` versions unless you are intentionally overriding Renovate behavior.
 
 ## License
 
