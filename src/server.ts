@@ -28,6 +28,8 @@ import { resolveCurrentRunContext } from "./report-progress-response.js";
 import { getLowLevelGraphQLClient } from "./sdk-compat.js";
 import type {
   ActorContext,
+  AvailabilityOverride,
+  AvailabilityOverrideInput,
   Contract,
   DelegationGrant,
   DelegationGrantFilterInput,
@@ -48,74 +50,6 @@ function createActionMarkerStore(): LocalActionMarkerStore {
   return new LocalActionMarkerStore();
 }
 let activeTracker: CalibrationTracker | null = null;
-
-interface AvailabilityOverride {
-  id: string;
-  mode: "online" | "busy" | "limited" | "offline";
-  reason: string | null;
-  source: string;
-  expiresAt: string;
-  cancelledAt: string | null;
-  expiredAt: string | null;
-  createdById: string;
-  cancelledById: string | null;
-  insertedAt: string;
-  updatedAt: string;
-}
-
-const ACTIVE_AVAILABILITY_OVERRIDE_QUERY = `
-  query ActiveAvailabilityOverride {
-    activeAvailabilityOverride {
-      id
-      mode
-      reason
-      source
-      expiresAt
-      cancelledAt
-      expiredAt
-      createdById
-      cancelledById
-      insertedAt
-      updatedAt
-    }
-  }
-`;
-
-const CREATE_AVAILABILITY_OVERRIDE_MUTATION = `
-  mutation CreateAvailabilityOverride($input: AvailabilityOverrideInput!) {
-    createAvailabilityOverride(input: $input) {
-      id
-      mode
-      reason
-      source
-      expiresAt
-      cancelledAt
-      expiredAt
-      createdById
-      cancelledById
-      insertedAt
-      updatedAt
-    }
-  }
-`;
-
-const CANCEL_AVAILABILITY_OVERRIDE_MUTATION = `
-  mutation CancelAvailabilityOverride($id: ID!, $reason: String, $source: String) {
-    cancelAvailabilityOverride(id: $id, reason: $reason, source: $source) {
-      id
-      mode
-      reason
-      source
-      expiresAt
-      cancelledAt
-      expiredAt
-      createdById
-      cancelledById
-      insertedAt
-      updatedAt
-    }
-  }
-`;
 
 export function createServer(): Server {
   const server = new Server(
@@ -988,7 +922,7 @@ async function handleOverride(args: Record<string, unknown>) {
   const action = typeof args.action === "string" ? args.action : "get";
 
   if (action === "get") {
-    const override = await getActiveAvailabilityOverrideCompat(actorClient);
+    const override = await actorClient.getActiveAvailabilityOverride();
     return textResult(JSON.stringify({ override }, null, 2));
   }
 
@@ -997,21 +931,23 @@ async function handleOverride(args: Record<string, unknown>) {
       return errorResult("The 'mode' parameter is required for action='set'.");
     }
 
-    const override = await createAvailabilityOverrideCompat(actorClient, {
-      mode: args.mode as AvailabilityOverride["mode"],
-      durationMinutes:
-        typeof args.duration_minutes === "number" ? args.duration_minutes : undefined,
-      expiresAt: typeof args.expires_at === "string" ? args.expires_at : undefined,
-      reason: typeof args.reason === "string" ? args.reason : undefined,
-      source: "claude-code",
-    });
+    const override = await actorClient.createAvailabilityOverride(
+      availabilityOverrideInput({
+        mode: args.mode as AvailabilityOverride["mode"],
+        durationMinutes:
+          typeof args.duration_minutes === "number" ? args.duration_minutes : undefined,
+        expiresAt: typeof args.expires_at === "string" ? args.expires_at : undefined,
+        reason: typeof args.reason === "string" ? args.reason : undefined,
+        source: "claude-code",
+      }),
+    );
 
     return textResult(JSON.stringify({ override }, null, 2));
   }
 
   if (action === "clear") {
     const idArg = typeof args.id === "string" ? args.id : undefined;
-    const activeOverride = idArg ? null : await getActiveAvailabilityOverrideCompat(actorClient);
+    const activeOverride = idArg ? null : await actorClient.getActiveAvailabilityOverride();
     const targetId = idArg ?? activeOverride?.id;
 
     if (!targetId) {
@@ -1020,10 +956,10 @@ async function handleOverride(args: Record<string, unknown>) {
       );
     }
 
-    const override = await cancelAvailabilityOverrideCompat(
-      actorClient,
+    const override = await actorClient.cancelAvailabilityOverride(
       targetId,
       typeof args.reason === "string" ? args.reason : undefined,
+      "claude-code",
     );
     return textResult(JSON.stringify({ override }, null, 2));
   }
@@ -1455,102 +1391,35 @@ function buildDelegationGrantFilterInput(
   };
 }
 
-type AvailabilityOverrideInput = {
+function availabilityOverrideInput(input: {
   mode: AvailabilityOverride["mode"];
   durationMinutes?: number;
   expiresAt?: string;
   reason?: string;
   source?: string;
-};
-
-async function createAvailabilityOverrideCompat(
-  client: HeadsDownClient,
-  input: AvailabilityOverrideInput,
-): Promise<AvailabilityOverride> {
-  const nativeMethod = (
-    client as unknown as {
-      createAvailabilityOverride?: (
-        value: AvailabilityOverrideInput,
-      ) => Promise<AvailabilityOverride>;
-    }
-  ).createAvailabilityOverride;
-
-  if (typeof nativeMethod === "function") {
-    return nativeMethod(input);
+}): AvailabilityOverrideInput {
+  if (input.expiresAt) {
+    return {
+      mode: input.mode,
+      expiresAt: input.expiresAt,
+      reason: input.reason,
+      source: input.source,
+    };
   }
 
-  const graphql = getLowLevelGraphQLClient(client);
-  if (!graphql) {
-    throw new Error("Availability override APIs are unavailable in this @headsdown/sdk version.");
+  if (typeof input.durationMinutes === "number") {
+    return {
+      mode: input.mode,
+      durationMinutes: input.durationMinutes,
+      reason: input.reason,
+      source: input.source,
+    };
   }
 
-  const data = await graphql.request(CREATE_AVAILABILITY_OVERRIDE_MUTATION, { input });
-  const override =
-    (data.createAvailabilityOverride as AvailabilityOverride | null | undefined) ?? null;
-  if (!override) {
-    throw new Error("HeadsDown API returned no availability override data.");
-  }
-
-  return override;
-}
-
-async function getActiveAvailabilityOverrideCompat(
-  client: HeadsDownClient,
-): Promise<AvailabilityOverride | null> {
-  const nativeMethod = (
-    client as unknown as {
-      getActiveAvailabilityOverride?: () => Promise<AvailabilityOverride | null>;
-    }
-  ).getActiveAvailabilityOverride;
-
-  if (typeof nativeMethod === "function") {
-    return nativeMethod();
-  }
-
-  const graphql = getLowLevelGraphQLClient(client);
-  if (!graphql) {
-    throw new Error("Availability override APIs are unavailable in this @headsdown/sdk version.");
-  }
-
-  const data = await graphql.request(ACTIVE_AVAILABILITY_OVERRIDE_QUERY);
-  return (data.activeAvailabilityOverride as AvailabilityOverride | null | undefined) ?? null;
-}
-
-async function cancelAvailabilityOverrideCompat(
-  client: HeadsDownClient,
-  id: string,
-  reason?: string,
-): Promise<AvailabilityOverride> {
-  const nativeMethod = (
-    client as unknown as {
-      cancelAvailabilityOverride?: (
-        value: string,
-        reason?: string,
-      ) => Promise<AvailabilityOverride>;
-    }
-  ).cancelAvailabilityOverride;
-
-  if (typeof nativeMethod === "function") {
-    return nativeMethod(id, reason);
-  }
-
-  const graphql = getLowLevelGraphQLClient(client);
-  if (!graphql) {
-    throw new Error("Availability override APIs are unavailable in this @headsdown/sdk version.");
-  }
-
-  const data = await graphql.request(CANCEL_AVAILABILITY_OVERRIDE_MUTATION, {
-    id,
-    reason,
-    source: "claude-code",
-  });
-  const override =
-    (data.cancelAvailabilityOverride as AvailabilityOverride | null | undefined) ?? null;
-  if (!override) {
-    throw new Error("HeadsDown API returned no cancelled override data.");
-  }
-
-  return override;
+  throw new ValidationError(
+    "Either duration_minutes or expires_at is required.",
+    "duration_minutes",
+  );
 }
 
 function getCredentialsPathOverride(): string | undefined {

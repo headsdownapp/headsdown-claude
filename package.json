@@ -47,7 +47,7 @@
     "@modelcontextprotocol/sdk": "^1.12.0"
   },
   "devDependencies": {
-    "@headsdown/sdk": "git+https://github.com/headsdownapp/headsdown-sdk.git#0dfaf46",
+    "@headsdown/sdk": "^0.8.0",
     "@types/node": "^20.17.0",
     "esbuild": "^0.25.11",
     "prettier": "^3.4.0",
