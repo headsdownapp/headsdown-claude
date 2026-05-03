@@ -194,11 +194,16 @@ var PROHIBITED_KEYS = /* @__PURE__ */ new Set([
   "message",
   "messages",
   "content",
+  "body",
+  "text",
+  "description",
   "code",
   "diff",
   "patch",
+  "snippet",
   "file",
   "files",
+  "file_contents",
   "file_path",
   "file_paths",
   "path",
@@ -208,12 +213,17 @@ var PROHIBITED_KEYS = /* @__PURE__ */ new Set([
   "repository_name",
   "branch",
   "branch_name",
+  "directory",
+  "directory_name",
   "terminal_output",
   "stdout",
   "stderr",
   "log",
   "logs",
+  "build_log",
+  "build_logs",
   "test_log",
+  "output",
   "stacktrace",
   "traceback",
   "url",
@@ -221,15 +231,68 @@ var PROHIBITED_KEYS = /* @__PURE__ */ new Set([
   "commit_message",
   "pr_body",
   "issue_body",
+  "ticket_body",
+  "ticket_description",
   "calendar_title",
+  "calendar_description",
+  "calendar_location",
+  "attendee",
+  "attendees",
+  "location",
+  "locations",
+  "meeting_link",
+  "meeting_links",
   "slack_message",
   "email_body",
+  "chat_message",
+  "notification_body",
+  "dm_content",
   "screenshot",
   "screen_recording",
   "secret",
+  "secrets",
   "token",
+  "tokens",
+  "access_token",
+  "access_tokens",
+  "refresh_token",
+  "refresh_tokens",
   "api_key",
-  "environment"
+  "api_keys",
+  "password",
+  "cookie",
+  "environment",
+  "environment_variable",
+  "environment_variables",
+  "env_var",
+  "env_vars"
+]);
+var PROHIBITED_COMPACT_KEYS = new Set(Array.from(PROHIBITED_KEYS, (key) => key.replace(/_/g, "")));
+var PROHIBITED_KEY_TOKENS = /* @__PURE__ */ new Set([
+  "body",
+  "code",
+  "content",
+  "contents",
+  "cookie",
+  "description",
+  "diff",
+  "log",
+  "logs",
+  "output",
+  "password",
+  "patch",
+  "prompt",
+  "prompts",
+  "secret",
+  "secrets",
+  "snippet",
+  "stderr",
+  "stdout",
+  "stacktrace",
+  "text",
+  "token",
+  "tokens",
+  "traceback"
 ]);
 var UNSAFE_VALUE_PATTERNS = [
   /(?:^|\s)(?:[./~]|[A-Za-z]:\\)[^\s]+/,
@@ -262,8 +325,7 @@ function buildAgentRunEventInput(input) {
     payload,
     progressPayload: progressPayload2
   });
-  assertPrivacySafe(variablesInput);
-  return variablesInput;
+  return privacySafeClone(variablesInput, "input");
 }
 function startedEvent(context, payload) {
   return { ...context, eventType: "agent_run.started", payload };
@@ -310,26 +372,114 @@ function buildAgentRunEventIdempotencyKey(runId, eventType, sequence) {
   const suffix = sequence === void 0 ? Date.now().toString(36) : String(sequence);
   return `${safeToken(runId)}:${safeToken(eventType)}:${suffix}`;
 }
+function bucketFileCount(count) {
+  if (count === void 0 || !Number.isFinite(count) || count < 0)
+    return "unknown";
+  if (count === 0)
+    return "0";
+  if (count <= 2)
+    return "1_to_2";
+  if (count <= 5)
+    return "3_to_5";
+  if (count <= 10)
+    return "6_to_10";
+  return "over_10";
+}
 function assertPrivacySafe(value, path = "input") {
+  void privacySafeClone(value, path);
+}
+function privacySafeClone(value, path) {
   if (value === null || value === void 0)
-    return;
+    return value;
   if (Array.isArray(value)) {
-    value.forEach((entry, index) => assertPrivacySafe(entry, `${path}[${index}]`));
-    return;
+    assertPlainJsonArray(value, path);
+    const clone = [];
+    Object.setPrototypeOf(clone, null);
+    for (let index = 0; index < value.length; index += 1) {
+      clone[index] = privacySafeClone(value[index], `${path}[${index}]`);
+    }
+    return clone;
   }
   if (typeof value === "object") {
-    for (const [key, entry] of Object.entries(value)) {
-      const normalizedKey = key.toLowerCase().replace(/[\s-]+/g, "_");
-      if (PROHIBITED_KEYS.has(normalizedKey)) {
+    if (!isPlainRecord(value)) {
+      throw new ValidationError("Agent run events can only include plain JSON-compatible metadata objects.", path);
+    }
+    const clone = /* @__PURE__ */ Object.create(null);
+    for (const [key, entry] of plainRecordEntries(value, path)) {
+      if (isProhibitedPrivacyKey(key)) {
         throw new ValidationError(`Agent run events cannot include raw-content field '${key}'.`, path);
       }
-      assertPrivacySafe(entry, `${path}.${key}`);
+      clone[key] = privacySafeClone(entry, `${path}.${key}`);
     }
-    return;
+    return clone;
+  }
+  if (typeof value === "function" || typeof value === "symbol" || typeof value === "bigint") {
+    throw new ValidationError("Agent run events can only include JSON-compatible metadata values.", path);
+  }
+  if (typeof value === "number" && !Number.isFinite(value)) {
+    throw new ValidationError("Agent run events can only include finite numeric metadata values.", path);
   }
   if (typeof value === "string" && UNSAFE_VALUE_PATTERNS.some((pattern) => pattern.test(value))) {
     throw new ValidationError("Agent run events cannot include paths, URLs, logs, secrets, or raw content.", path);
   }
+  return value;
+}
+function isProhibitedPrivacyKey(key) {
+  const normalizedKey = normalizePrivacyKey(key);
+  const compactKey = normalizedKey.replace(/_/g, "");
+  return PROHIBITED_KEYS.has(normalizedKey) || PROHIBITED_COMPACT_KEYS.has(compactKey) || normalizedKey.split("_").some((token) => PROHIBITED_KEY_TOKENS.has(token));
+}
+function normalizePrivacyKey(key) {
+  return key.replace(/([a-z0-9])([A-Z])/g, "$1_$2").toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "");
+}
+function plainRecordEntries(value, path) {
+  assertNoJsonSerializer(value, path);
+  const entries = [];
+  const descriptors = Object.getOwnPropertyDescriptors(value);
+  for (const key of Reflect.ownKeys(descriptors)) {
+    if (typeof key !== "string") {
+      throw new ValidationError("Agent run events can only include string-keyed metadata fields.", path);
+    }
+    const descriptor = descriptors[key];
+    assertJsonDataProperty(key, descriptor, path);
+    entries.push([key, descriptor.value]);
+  }
+  return entries;
+}
+function assertPlainJsonArray(value, path) {
+  assertNoJsonSerializer(value, path);
+  const descriptors = Object.getOwnPropertyDescriptors(value);
+  for (let index = 0; index < value.length; index += 1) {
+    if (!Object.hasOwn(descriptors, String(index))) {
+      throw new ValidationError("Agent run events can only include dense JSON-compatible metadata arrays.", path);
+    }
+  }
+  for (const key of Reflect.ownKeys(descriptors)) {
+    if (key === "length")
+      continue;
+    if (typeof key !== "string" || !isArrayIndexKey(key)) {
+      throw new ValidationError("Agent run events can only include plain JSON-compatible metadata arrays.", path);
+    }
+    assertJsonDataProperty(key, descriptors[key], path);
+  }
+}
+function assertJsonDataProperty(key, descriptor, path) {
+  if (!descriptor || key === "toJSON" || !descriptor.enumerable || !("value" in descriptor)) {
+    throw new ValidationError("Agent run events can only include plain JSON-compatible metadata properties.", path);
+  }
+}
+function assertNoJsonSerializer(value, path) {
+  if ("toJSON" in value) {
+    throw new ValidationError("Agent run events cannot include custom JSON serialization hooks.", path);
+  }
+}
+function isArrayIndexKey(key) {
+  const index = Number(key);
+  return Number.isInteger(index) && index >= 0 && index < 2 ** 32 - 1 && String(index) === key;
+}
+function isPlainRecord(value) {
+  const prototype = Object.getPrototypeOf(value);
+  return prototype === Object.prototype || prototype === null;
 }
 function validateBaseInput(input) {
   if (!input.eventType?.trim())
@@ -347,23 +497,22 @@ function validateBaseInput(input) {
   }
 }
 function normalizePayload(payload) {
-  if (!payload || Object.keys(payload).length === 0) {
+  if (!payload || !isPlainRecord(payload) || Object.keys(payload).length === 0) {
     throw new ValidationError("payload is required for this agent run event.", "payload");
   }
-  assertPrivacySafe(payload, "payload");
-  return payload;
+  return privacySafeClone(payload, "payload");
 }
 function normalizeProgressPayload(payload) {
   if (!payload) {
     throw new ValidationError("progressPayload is required for agent_run.progress_reported.", "progressPayload");
   }
-  for (const [field, value] of Object.entries(payload)) {
+  const normalized = privacySafeClone(payload, "progressPayload");
+  for (const [field, value] of Object.entries(normalized)) {
     if (typeof value === "number" && (!Number.isInteger(value) || value < 0)) {
       throw new ValidationError(`${field} must be a non-negative integer.`, field);
     }
   }
-  assertPrivacySafe(payload, "progressPayload");
-  return payload;
+  return normalized;
 }
 function randomUuid() {
   return globalThis.crypto?.randomUUID?.() ?? fallbackUuid();
@@ -714,26 +863,36 @@ var ENUM_FIELDS = /* @__PURE__ */ new Set([
   "runSummariesState",
   "valueMetricsState"
 ]);
-function normalizeEnums(data) {
+function normalizeEnums(data, parentKey) {
   if (data === null || data === void 0)
     return data;
   if (Array.isArray(data))
-    return data.map(normalizeEnums);
+    return data.map((item) => normalizeEnums(item, parentKey));
   if (typeof data !== "object")
     return data;
   const result = {};
   for (const [key, value] of Object.entries(data)) {
-    if (ENUM_FIELDS.has(key) && typeof value === "string") {
-      result[key] = value.toLowerCase();
-    } else if (ENUM_FIELDS.has(key) && Array.isArray(value)) {
-      result[key] = value.map((item) => typeof item === "string" ? item.toLowerCase() : item);
+    if (isEnumField(key, parentKey) && typeof value === "string") {
+      result[key] = normalizeEnumValue(value);
+    } else if (isEnumField(key, parentKey) && Array.isArray(value)) {
+      result[key] = value.map((item) => typeof item === "string" ? normalizeEnumValue(item) : item);
     } else if (typeof value === "object" && value !== null) {
-      result[key] = normalizeEnums(value);
+      result[key] = normalizeEnums(value, key);
     } else {
       result[key] = value;
     }
   }
   return result;
+}
+function isEnumField(key, parentKey) {
+  if (key === "source")
+    return parentKey === "wrapUpGuidance";
+  if (key === "actionKey")
+    return parentKey === "result";
+  return ENUM_FIELDS.has(key);
+}
+function normalizeEnumValue(value) {
+  return /^[A-Z0-9_]+$/.test(value) ? value.toLowerCase() : value;
 }
 function toGraphQLEnum(value) {
   return value.toUpperCase();
@@ -805,6 +964,57 @@ var SCHEDULE_QUERY = `
         statusText
         autoActivate
       }
+    }
+  }
+`;
+var ACTIVE_AVAILABILITY_OVERRIDE_QUERY = `
+  query ActiveAvailabilityOverride {
+    activeAvailabilityOverride {
+      id
+      mode
+      reason
+      source
+      expiresAt
+      cancelledAt
+      expiredAt
+      createdById
+      cancelledById
+      insertedAt
+      updatedAt
+    }
+  }
+`;
+var CREATE_AVAILABILITY_OVERRIDE_MUTATION = `
+  mutation CreateAvailabilityOverride($input: AvailabilityOverrideInput!) {
+    createAvailabilityOverride(input: $input) {
+      id
+      mode
+      reason
+      source
+      expiresAt
+      cancelledAt
+      expiredAt
+      createdById
+      cancelledById
+      insertedAt
+      updatedAt
+    }
+  }
+`;
+var CANCEL_AVAILABILITY_OVERRIDE_MUTATION = `
+  mutation CancelAvailabilityOverride($id: ID!, $reason: String, $source: String) {
+    cancelAvailabilityOverride(id: $id, reason: $reason, source: $source) {
+      id
+      mode
+      reason
+      source
+      expiresAt
+      cancelledAt
+      expiredAt
+      createdById
+      cancelledById
+      insertedAt
+      updatedAt
     }
   }
 `;
@@ -1836,6 +2046,53 @@ var HeadsDownClient = class _HeadsDownClient {
       throw error;
     }
   }
+  // === Availability Overrides ===
+  /** Get the active temporary availability override, if one exists. */
+  async getActiveAvailabilityOverride() {
+    const data = await this.graphql.request(ACTIVE_AVAILABILITY_OVERRIDE_QUERY);
+    return data.activeAvailabilityOverride ?? null;
+  }
+  /** Create a temporary availability override for the authenticated user. */
+  async createAvailabilityOverride(input) {
+    validateAvailabilityOverrideInput(input);
+    const variables = {
+      input: stripUndefined2({
+        mode: toGraphQLEnum(input.mode),
+        durationMinutes: input.durationMinutes,
+        expiresAt: input.expiresAt,
+        reason: input.reason,
+        source: input.source ?? "sdk"
+      })
+    };
+    try {
+      const data = await this.graphql.request(CREATE_AVAILABILITY_OVERRIDE_MUTATION, variables);
+      if (!data.createAvailabilityOverride) {
+        throw new ApiError("HeadsDown API returned no createAvailabilityOverride data.");
+      }
+      return data.createAvailabilityOverride;
+    } catch (error) {
+      throw mapAvailabilityOverrideAuthError(error);
+    }
+  }
+  /** Cancel a temporary availability override by id. */
+  async cancelAvailabilityOverride(id, reason, source = "sdk") {
+    if (!id?.trim()) {
+      throw new ValidationError("Availability override ID is required.", "id");
+    }
+    try {
+      const data = await this.graphql.request(CANCEL_AVAILABILITY_OVERRIDE_MUTATION, stripUndefined2({
+        id,
+        reason,
+        source
+      }));
+      if (!data.cancelAvailabilityOverride) {
+        throw new ApiError("HeadsDown API returned no cancelAvailabilityOverride data.");
+      }
+      return data.cancelAvailabilityOverride;
+    } catch (error) {
+      throw mapAvailabilityOverrideAuthError(error);
+    }
+  }
   // === Verdicts ===
   /**
    * Submit a task proposal for verdict evaluation.
@@ -2218,7 +2475,7 @@ var HeadsDownClient = class _HeadsDownClient {
     const variables = stripUndefined2({
       runId: args.runId,
       eventType: args.eventType,
-      resolutionKind: args.resolutionKind,
+      resolutionKind: args.resolutionKind ? toGraphQLEnum(args.resolutionKind) : void 0,
       flaggedForReview: args.flaggedForReview,
       insertedAfter: args.insertedAfter,
       insertedBefore: args.insertedBefore,
@@ -2354,6 +2611,28 @@ var AVAILABILITY_FIELDS = /* @__PURE__ */ new Set([
   "autoRespond",
   "lock"
 ]);
+function validateAvailabilityOverrideInput(input) {
+  if (!input || typeof input !== "object") {
+    throw new ValidationError("Availability override input is required.", "input");
+  }
+  if (!input.mode) {
+    throw new ValidationError("Availability override mode is required.", "mode");
+  }
+  if (input.mode !== "online" && input.mode !== "busy" && input.mode !== "limited" && input.mode !== "offline") {
+    throw new ValidationError("Availability override mode is invalid.", "mode");
+  }
+  const hasDuration = input.durationMinutes !== void 0;
+  const hasExpiresAt = input.expiresAt !== void 0;
+  if (hasDuration === hasExpiresAt) {
+    throw new ValidationError("Exactly one of durationMinutes or expiresAt is required.", "durationMinutes");
+  }
+  if (hasDuration && (!Number.isInteger(input.durationMinutes) || input.durationMinutes <= 0)) {
+    throw new ValidationError("durationMinutes must be a positive integer.", "durationMinutes");
+  }
+  if (hasExpiresAt && (!input.expiresAt || Number.isNaN(Date.parse(input.expiresAt)))) {
+    throw new ValidationError("expiresAt must be a valid timestamp.", "expiresAt");
+  }
+}
 function validateDelegationGrantInput(input) {
   if (!input.permissions || input.permissions.length === 0) {
     throw new ValidationError("Delegation grant permissions must include at least one permission.", "permissions");
@@ -2407,6 +2686,14 @@ function mapDelegationAuthError(error) {
 function mapPresetAuthError(error) {
   if (error instanceof ApiError && error.message.includes("Missing actor context")) {
     return new AuthError("applyPreset with API key authorization requires actor context. Set actorContext on the client or use withActor().");
+  }
+  return error instanceof Error ? error : new ApiError(String(error));
+}
+function mapAvailabilityOverrideAuthError(error) {
+  if (error instanceof AuthError)
+    return error;
+  if (error instanceof ApiError && error.message.includes("Missing actor context")) {
+    return new AuthError("Availability override create/cancel requires actor context or delegated permission. Set actorContext on the client or use withActor().");
   }
   return error instanceof Error ? error : new ApiError(String(error));
 }
@@ -2913,36 +3200,340 @@ function describeExecutionDirective(input) {
   };
 }
 
+// node_modules/@headsdown/sdk/dist/types.js
+var HEADSDOWN_CALL_KEYS = [
+  "good_to_run",
+  "keep_it_tight",
+  "attention_window_closing",
+  "not_worth_starting_now",
+  "off_the_clock",
+  "finish_line_friction",
+  "rabbit_hole_detected",
+  "ready_to_resume",
+  "all_contained",
+  "needs_your_yes"
+];
+var HEADSDOWN_ACTION_KEYS = [
+  "continue",
+  "continue_with_limit",
+  "narrow_scope",
+  "ask_user",
+  "queue_for_later",
+  "queue_for_morning",
+  "pause_and_summarize",
+  "stop_run",
+  "resume_run",
+  "allow_once",
+  "allow_for_duration",
+  "create_temporary_exception",
+  "keep_queued"
+];
+
+// node_modules/@headsdown/sdk/dist/agent-control.js
+var SAFE_ACTION_ORDER = [
+  "keep_queued",
+  "pause_and_summarize",
+  "queue_for_later",
+  "stop_run"
+];
+var HUMAN_DECISION_SIGNALS = [
+  "approval",
+  "approve",
+  "risk",
+  "risky",
+  "boundary",
+  "spend",
+  "external",
+  "side_effect",
+  "escalation",
+  "human_decision",
+  "needs_your_yes"
+];
+var KEEP_TIGHT_SIGNALS = [
+  "limit",
+  "limited",
+  "low_confidence",
+  "short",
+  "scope",
+  "validation",
+  "uncertain",
+  "tool_budget",
+  "timebox"
+];
+var CONTAINED_SIGNALS = [
+  "no_action_needed",
+  "runs_within_bounds",
+  "zero_pending_asks",
+  "limits_holding"
+];
+function hasAnySignal(reasonCodes, signals) {
+  return reasonCodes.some((reasonCode) => signals.some((signal) => reasonCode.toLowerCase().includes(signal)));
+}
+function localCallKey(value) {
+  return typeof value === "string" && HEADSDOWN_CALL_KEYS.includes(value);
+}
+function localActionKey(value) {
+  return typeof value === "string" && HEADSDOWN_ACTION_KEYS.includes(value);
+}
+function knownAction(call) {
+  if (localActionKey(call.primaryActionKnownKey) && call.allowedActionKnownKeys.includes(call.primaryActionKnownKey)) {
+    return call.primaryActionKnownKey;
+  }
+  if (localActionKey(call.recommendedActionKnownKey) && call.allowedActionKnownKeys.includes(call.recommendedActionKnownKey)) {
+    return call.recommendedActionKnownKey;
+  }
+  return null;
+}
+function knownSecondaryAction(call) {
+  if (localActionKey(call.secondaryActionKnownKey) && call.allowedActionKnownKeys.includes(call.secondaryActionKnownKey)) {
+    return call.secondaryActionKnownKey;
+  }
+  return null;
+}
+function safestAction(call) {
+  return SAFE_ACTION_ORDER.find((actionKey) => call.allowedActionKnownKeys.includes(actionKey)) ?? null;
+}
+function fallbackKey(call) {
+  if (localCallKey(call.knownKey))
+    return { effectiveKey: call.knownKey, reason: "known_key" };
+  if (call.severity === "action_required" || call.severity === "critical" || call.severity === "boundary" || call.urgency === "high" || call.allowedUiIntents.includes("review_request") || hasAnySignal(call.reasonCodes, HUMAN_DECISION_SIGNALS)) {
+    return { effectiveKey: "needs_your_yes", reason: "human_decision_signal" };
+  }
+  const hasExplicitContainedSignals = CONTAINED_SIGNALS.every((signal) => call.reasonCodes.some((reasonCode) => reasonCode.toLowerCase().includes(signal)));
+  if (hasExplicitContainedSignals) {
+    if (call.allowedActionKeys.length === 0 && call.allowedActionKnownKeys.length === 0 && !call.allowedUiIntents.includes("review_request")) {
+      return { effectiveKey: "all_contained", reason: "all_contained_signal" };
+    }
+    return { effectiveKey: "needs_your_yes", reason: "safe_default" };
+  }
+  if (call.severity === "caution" || call.confidence !== "exact" || hasAnySignal(call.reasonCodes, KEEP_TIGHT_SIGNALS)) {
+    return { effectiveKey: "keep_it_tight", reason: "keep_tight_signal" };
+  }
+  return { effectiveKey: "needs_your_yes", reason: "safe_default" };
+}
+function fallbackTitle(key, title) {
+  if (title.trim().length > 0)
+    return title;
+  if (key === "keep_it_tight")
+    return "Keep it tight";
+  if (key === "all_contained")
+    return "All contained";
+  return "Needs your yes";
+}
+function fallbackBody(key, body) {
+  if (body.trim().length > 0)
+    return body;
+  if (key === "keep_it_tight") {
+    return "HeadsDown needs the agent to stay inside a tighter slice before continuing.";
+  }
+  if (key === "all_contained") {
+    return "Runs are staying inside your time, scope, and interruption limits. Nothing needs you right now.";
+  }
+  return "HeadsDown needs a human decision before this agent continues.";
+}
+function resolvedPrimaryActionIntent(call, resolved, primaryAction) {
+  if (!primaryAction) {
+    return resolved.effectiveKey === "needs_your_yes" ? "review_request" : "view_details";
+  }
+  if (resolved.reason === "known_key" && call.primaryActionKnownKey === primaryAction) {
+    return call.primaryActionIntent;
+  }
+  return "none";
+}
+function resolveHeadsDownCallFallback(call) {
+  const resolved = fallbackKey(call);
+  const primaryAction = resolved.reason === "known_key" ? knownAction(call) : safestAction(call);
+  const secondaryAction = resolved.reason === "known_key" ? knownSecondaryAction(call) : null;
+  return {
+    effectiveKey: resolved.effectiveKey,
+    originalKey: call.key,
+    unknownKey: resolved.reason === "known_key" ? null : call.key,
+    title: fallbackTitle(resolved.effectiveKey, call.title),
+    body: fallbackBody(resolved.effectiveKey, call.body),
+    primaryActionKey: primaryAction,
+    primaryActionIntent: resolvedPrimaryActionIntent(call, resolved, primaryAction),
+    secondaryActionKey: secondaryAction,
+    secondaryActionIntent: resolved.reason === "known_key" ? call.secondaryActionIntent : "view_details",
+    reason: resolved.reason
+  };
+}
+
 // node_modules/@headsdown/sdk/dist/local-session-summary.js
 var SAFE_TOKEN_PATTERN = "^[A-Za-z0-9_.:-]{1,256}$";
 var SAFE_TOKEN_REGEX = new RegExp(SAFE_TOKEN_PATTERN);
 
-// src/headsdown-call-keys.ts
-var CANONICAL_HEADSDOWN_CALL_KEYS = [
-  "good_to_run",
-  "keep_it_tight",
-  "not_worth_starting_now",
-  "off_the_clock",
-  "attention_window_closing",
-  "ready_to_resume",
-  "needs_your_yes"
+// node_modules/@headsdown/sdk/dist/agent-rendering.js
+var AGENT_UNKNOWN_CALL_SAFE_ACTIONS = [
+  "keep_queued",
+  "pause_and_summarize",
+  "queue_for_later",
+  "stop_run"
 ];
-var DEPRECATED_HEADSDOWN_CALL_KEYS = ["rabbit_hole_detected", "all_contained"];
-var CANONICAL_HEADSDOWN_CALL_KEY_SET = new Set(CANONICAL_HEADSDOWN_CALL_KEYS);
-var DEPRECATED_HEADSDOWN_CALL_KEY_SET = new Set(DEPRECATED_HEADSDOWN_CALL_KEYS);
-function normalizeHeadsDownCallKey(value) {
-  if (typeof value !== "string") return null;
-  const trimmed = value.replace(/[\r\n\t]+/g, " ").trim();
-  if (!trimmed) return null;
-  return trimmed.replace(/([a-z\d])([A-Z])/g, "$1_$2").replace(/[\s\-]+/g, "_").toLowerCase();
+var AGENT_ACTION_LABELS = {
+  continue: "Continue",
+  continue_with_limit: "Continue with limit",
+  narrow_scope: "Narrow scope",
+  ask_user: "Ask user",
+  queue_for_later: "Queue for later",
+  queue_for_morning: "Queue for morning",
+  pause_and_summarize: "Pause and summarize",
+  stop_run: "Stop run",
+  resume_run: "Resume run",
+  allow_once: "Allow once",
+  allow_for_duration: "Allow for duration",
+  create_temporary_exception: "Create temporary exception",
+  keep_queued: "Keep queued"
+};
+var AGENT_CALL_FALLBACK_COPY = {
+  good_to_run: {
+    title: "Good to run",
+    body: "HeadsDown says this run can proceed inside the current boundary."
+  },
+  keep_it_tight: {
+    title: "Keep it tight",
+    body: "HeadsDown needs the agent to stay inside a tighter slice before continuing."
+  },
+  attention_window_closing: {
+    title: "Window closing",
+    body: "The current attention window is closing soon. Wrap up or extend intentionally."
+  },
+  not_worth_starting_now: {
+    title: "Not worth starting now",
+    body: "HeadsDown recommends queueing this instead of starting it right now."
+  },
+  off_the_clock: {
+    title: "Off the clock",
+    body: "Queue this for later so the work is not lost."
+  },
+  finish_line_friction: {
+    title: "Finish-line friction",
+    body: "Validation or delivery is stuck while scope appears stable."
+  },
+  rabbit_hole_detected: {
+    title: "Rabbit hole detected",
+    body: "Progress signals suggest the run should pause, summarize, or narrow before continuing."
+  },
+  ready_to_resume: {
+    title: "Ready to resume",
+    body: "A queued run has a saved handoff and is ready to continue."
+  },
+  all_contained: {
+    title: "All contained",
+    body: "Runs are staying inside your time, scope, and interruption limits. Nothing needs you right now."
+  },
+  needs_your_yes: {
+    title: "Needs your yes",
+    body: "HeadsDown needs a human decision before this agent continues."
+  }
+};
+function renderHeadsDownCallForAgent(call) {
+  const fallback = resolveHeadsDownCallFallback(call);
+  const fallbackCopy = AGENT_CALL_FALLBACK_COPY[fallback.effectiveKey];
+  const useServerActionMetadata = fallback.reason === "known_key";
+  const title = safeRenderCopy(call.title, fallbackCopy.title, call.privacyMode);
+  const body = safeRenderCopy(call.body, fallbackCopy.body, call.privacyMode);
+  return {
+    callKey: fallback.effectiveKey,
+    originalKey: call.key,
+    unknownKey: fallback.unknownKey,
+    title: title.value,
+    titleSource: title.source,
+    body: body.value,
+    bodySource: body.source,
+    severity: call.severity,
+    urgency: call.urgency,
+    primaryAction: fallback.primaryActionKey ? renderAction(call, fallback.primaryActionKey, useServerActionMetadata ? fallback.primaryActionIntent : "none", useServerActionMetadata ? "primary" : "fallback", useServerActionMetadata) : null,
+    secondaryAction: fallback.secondaryActionKey ? renderAction(call, fallback.secondaryActionKey, fallback.secondaryActionIntent, "secondary", useServerActionMetadata) : null,
+    allowedActions: knownAllowedActions(call, fallback.reason).map((actionKey) => renderAction(call, actionKey, useServerActionMetadata ? intentForAllowedAction(call, actionKey) : "none", "allowed", useServerActionMetadata)),
+    reasonCodes: [...call.reasonCodes],
+    confidence: call.confidence,
+    privacyMode: call.privacyMode,
+    expiresAt: call.expiresAt,
+    fallbackReason: fallback.reason
+  };
 }
-function canonicalHeadsDownCallKey(value) {
-  const normalized = normalizeHeadsDownCallKey(value);
-  return normalized && CANONICAL_HEADSDOWN_CALL_KEY_SET.has(normalized) ? normalized : null;
+function isHeadsDownCallKey(value) {
+  return typeof value === "string" && HEADSDOWN_CALL_KEYS.includes(value);
 }
-function isDeprecatedHeadsDownCallKey(value) {
-  const normalized = normalizeHeadsDownCallKey(value);
-  return normalized !== null && DEPRECATED_HEADSDOWN_CALL_KEY_SET.has(normalized);
+function isHeadsDownActionKey(value) {
+  return typeof value === "string" && HEADSDOWN_ACTION_KEYS.includes(value);
+}
+function isSafeAgentRenderCopy(value, privacyMode) {
+  const trimmed = value.trim();
+  if (trimmed.length === 0 || privacyMode !== "privacy_safe")
+    return false;
+  try {
+    assertPrivacySafe(trimmed, "headsdownCall.copy");
+    return true;
+  } catch {
+    return false;
+  }
+}
+function safeRenderCopy(value, fallback, privacyMode) {
+  const trimmed = value.trim();
+  if (isSafeAgentRenderCopy(trimmed, privacyMode)) {
+    return { value: trimmed, source: "server" };
+  }
+  return { value: fallback, source: "fallback" };
+}
+function knownAllowedActions(call, fallbackReason) {
+  const knownActions = Array.from(new Set(call.allowedActionKnownKeys.filter(isHeadsDownActionKey)));
+  if (fallbackReason === "known_key")
+    return knownActions;
+  return knownActions.filter((actionKey) => AGENT_UNKNOWN_CALL_SAFE_ACTIONS.includes(actionKey));
+}
+function renderAction(call, actionKey, intent, requestedSource, useServerActionMetadata) {
+  const source = useServerActionMetadata ? actionSource(call, actionKey, requestedSource) : requestedSource;
+  return {
+    key: actionKey,
+    label: useServerActionMetadata ? actionLabel(call, actionKey, source) : AGENT_ACTION_LABELS[actionKey],
+    renderHint: renderHintForIntent(intent),
+    source
+  };
+}
+function actionSource(call, actionKey, requestedSource) {
+  if (call.primaryActionKnownKey === actionKey)
+    return "primary";
+  if (call.secondaryActionKnownKey === actionKey)
+    return "secondary";
+  if (call.recommendedActionKnownKey === actionKey)
+    return "recommended";
+  return requestedSource;
+}
+function actionLabel(call, actionKey, source) {
+  const serverLabel = source === "primary" ? call.primaryActionLabel : source === "secondary" ? call.secondaryActionLabel : null;
+  if (serverLabel && isSafeAgentRenderCopy(serverLabel, call.privacyMode)) {
+    return serverLabel.trim();
+  }
+  return AGENT_ACTION_LABELS[actionKey];
+}
+function intentForAllowedAction(call, actionKey) {
+  if (call.primaryActionKnownKey === actionKey)
+    return call.primaryActionIntent;
+  if (call.secondaryActionKnownKey === actionKey)
+    return call.secondaryActionIntent;
+  return "none";
+}
+function renderHintForIntent(intent) {
+  switch (intent) {
+    case "review_request":
+      return "review";
+    case "view_queue":
+      return "queue";
+    case "review_handoff":
+      return "handoff";
+    case "view_receipts":
+      return "receipts";
+    case "view_details":
+    case "review_runs":
+    case "adjust_playbooks":
+    case "start_run":
+      return "inspect";
+    case "none":
+      return "none";
+    default:
+      return "inspect";
+  }
 }
 
 // src/sdk-compat.ts
@@ -2957,7 +3548,7 @@ function getLowLevelGraphQLClient(client) {
 }
 
 // src/agent-control.ts
-var NON_INTERVENTION_KEYS = /* @__PURE__ */ new Set(["good_to_run", "ready_to_resume"]);
+var NON_INTERVENTION_KEYS = /* @__PURE__ */ new Set(["good_to_run", "ready_to_resume", "all_contained"]);
 var AGENT_CONTROL_OVERVIEW_QUERY2 = `
   query AgentControlOverviewForClaudeRendering {
     agentControlOverview {
@@ -2985,6 +3576,7 @@ var AGENT_CONTROL_OVERVIEW_QUERY2 = `
         confidence
         evidenceSource
         privacyMode
+        expiresAt
       }
       runSummaries {
         runId
@@ -2995,65 +3587,73 @@ var AGENT_CONTROL_OVERVIEW_QUERY2 = `
   }
 `;
 function renderHeadsDownCall(call) {
-  const knownKey = canonicalKnownKey(call.knownKey) ?? canonicalKnownKey(call.key);
-  const deprecated = isDeprecatedCallKey(call.knownKey) || isDeprecatedCallKey(call.key) || isDeprecatedCallKey(knownKey);
-  const safeFallback = knownKey === null;
-  const title = deprecated ? fallbackTitle({}) : cleanText(call.title) ?? fallbackTitle(call);
-  const body = deprecated ? fallbackBody({}) : cleanText(call.body) ?? fallbackBody(call);
-  const intervention = isInterventionCall(call);
-  const allowedActionKeys = canonicalAllowedActionKeys(call);
+  const rendered = renderHeadsDownCallForAgent(toSdkHeadsDownCall(call));
+  const allowedActionKeys = rendered.allowedActions.map((action) => action.key);
   const allowedActionsLine = renderAllowedActionsLine(allowedActionKeys);
   const text = [
-    `HeadsDown call: ${title}.`,
-    body,
+    `HeadsDown call: ${rendered.title}.`,
+    rendered.body,
     allowedActionsLine,
     "Claude Code controls the model. HeadsDown controls the run."
   ].join("\n");
   return {
-    key: call.key,
-    knownKey,
-    title,
+    key: rendered.originalKey,
+    knownKey: rendered.unknownKey ? null : rendered.callKey,
+    title: rendered.title,
     text,
-    intervention,
-    safeFallback,
+    intervention: isInterventionCall(rendered),
+    safeFallback: rendered.fallbackReason !== "known_key",
     allowedActionKeys
   };
 }
 async function getAgentControlOverviewCompat(client) {
-  const graphql = getLowLevelGraphQLClient(client);
-  if (!graphql) return null;
   try {
+    if (typeof client.getAgentControlOverview === "function") {
+      const overview = await client.getAgentControlOverview();
+      return overview;
+    }
+    const graphql = getLowLevelGraphQLClient(client);
+    if (!graphql) return null;
     const data = await graphql.request(AGENT_CONTROL_OVERVIEW_QUERY2);
     return data.agentControlOverview ?? null;
   } catch {
     return null;
   }
 }
+function toSdkHeadsDownCall(call) {
+  return {
+    key: cleanText(call.key) ?? "needs_your_yes",
+    knownKey: normalizeCallKey(call.knownKey) ?? normalizeCallKey(call.key),
+    title: cleanText(call.title) ?? "",
+    body: cleanText(call.body) ?? "",
+    severity: normalizeSeverity(call.severity),
+    urgency: normalizeUrgency(call.urgency),
+    primaryActionLabel: cleanText(call.primaryActionLabel),
+    primaryActionKey: cleanText(call.primaryActionKey),
+    primaryActionKnownKey: normalizeActionKey(call.primaryActionKnownKey) ?? normalizeActionKey(call.primaryActionKey),
+    primaryActionIntent: normalizeUiIntent(call.primaryActionIntent),
+    secondaryActionLabel: cleanText(call.secondaryActionLabel),
+    secondaryActionKey: cleanText(call.secondaryActionKey),
+    secondaryActionKnownKey: normalizeActionKey(call.secondaryActionKnownKey) ?? normalizeActionKey(call.secondaryActionKey),
+    secondaryActionIntent: normalizeUiIntent(call.secondaryActionIntent),
+    recommendedActionKey: cleanText(call.recommendedActionKey),
+    recommendedActionKnownKey: normalizeActionKey(call.recommendedActionKnownKey) ?? normalizeActionKey(call.recommendedActionKey),
+    allowedActionKeys: normalizeStrings(call.allowedActionKeys),
+    allowedActionKnownKeys: normalizeActionKeys(
+      call.allowedActionKnownKeys && call.allowedActionKnownKeys.length > 0 ? call.allowedActionKnownKeys : call.allowedActionKeys
+    ),
+    allowedUiIntents: normalizeUiIntents(call.allowedUiIntents),
+    reasonCodes: normalizeStrings(call.reasonCodes),
+    confidence: normalizeConfidence(call.confidence),
+    evidenceSource: normalizeEvidenceSource(call.evidenceSource),
+    privacyMode: normalizePrivacyMode(call.privacyMode),
+    expiresAt: cleanText(call.expiresAt)
+  };
+}
 function isInterventionCall(call) {
-  const knownKey = normalizeEnumValue(call.knownKey);
-  if (knownKey && NON_INTERVENTION_KEYS.has(knownKey)) return false;
-  if (call.allowedActionKeys?.length || call.allowedUiIntents?.some((intent) => normalizeEnumValue(intent) === "review_request"))
-    return true;
-  const key = normalizeEnumValue(call.key);
-  return key !== null && !NON_INTERVENTION_KEYS.has(key);
-}
-function fallbackTitle(call) {
-  const key = normalizeEnumValue(call.key);
-  const knownKey = canonicalKnownKey(call.knownKey) ?? canonicalKnownKey(call.key);
-  if (knownKey === null || isDeprecatedCallKey(key)) return "Needs your yes";
-  if (knownKey === "attention_window_closing") return "Window closing";
-  return humanizeToken(call.key) || "HeadsDown call";
-}
-function fallbackBody(call) {
-  const key = normalizeEnumValue(call.key);
-  const knownKey = canonicalKnownKey(call.knownKey) ?? canonicalKnownKey(call.key);
-  if (knownKey === null || isDeprecatedCallKey(key)) {
-    return "HeadsDown returned a call this Claude integration does not recognize. Ask before going deeper.";
-  }
-  if (knownKey === "attention_window_closing") {
-    return "Your attention window is closing. Choose whether to extend or wrap with a summary while context is fresh.";
-  }
-  return "HeadsDown returned a call without display copy. Follow the allowed actions and ask before expanding scope.";
+  if (NON_INTERVENTION_KEYS.has(call.callKey)) return false;
+  if (call.allowedActions.length > 0) return true;
+  return !NON_INTERVENTION_KEYS.has(call.callKey);
 }
 function renderAllowedActionsLine(allowedActionKeys) {
   if (allowedActionKeys.length === 0) {
@@ -3061,32 +3661,110 @@ function renderAllowedActionsLine(allowedActionKeys) {
   }
   return `Allowed actions: ${allowedActionKeys.join(", ")}.`;
 }
-function canonicalAllowedActionKeys(call) {
-  const raw = call.allowedActionKeys ?? [];
-  const known = call.allowedActionKnownKeys ?? [];
-  const values = raw.length > 0 ? raw : known;
+function normalizeCallKey(value) {
+  const normalized = normalizeToken2(value);
+  return normalized && isHeadsDownCallKey(normalized) ? normalized : null;
+}
+function normalizeActionKey(value) {
+  const normalized = normalizeToken2(value);
+  return normalized && isHeadsDownActionKey(normalized) ? normalized : null;
+}
+function normalizeActionKeys(values) {
   return [
     ...new Set(
-      values.map((value) => normalizeActionKey(value)).filter((value) => !!value)
+      normalizeStrings(values).map(normalizeActionKey).filter((value) => !!value)
     )
   ];
 }
-function normalizeActionKey(value) {
-  return normalizeEnumValue(value);
+function normalizeStrings(values) {
+  if (!values || values.length === 0) return [];
+  return [...new Set(values.map(cleanText).filter((value) => !!value))];
 }
-function canonicalKnownKey(value) {
-  return canonicalHeadsDownCallKey(value);
+function normalizeUiIntent(value) {
+  const normalized = normalizeToken2(value);
+  switch (normalized) {
+    case "view_details":
+    case "review_request":
+    case "review_runs":
+    case "review_handoff":
+    case "view_queue":
+    case "view_receipts":
+    case "adjust_playbooks":
+    case "start_run":
+    case "none":
+      return normalized;
+    default:
+      return "none";
+  }
 }
-function isDeprecatedCallKey(value) {
-  return isDeprecatedHeadsDownCallKey(value);
+function normalizeUiIntents(values) {
+  if (!values || values.length === 0) return [];
+  return [...new Set(values.map(normalizeUiIntent))];
 }
-function normalizeEnumValue(value) {
-  return normalizeHeadsDownCallKey(value);
+function normalizeSeverity(value) {
+  const normalized = normalizeToken2(value);
+  switch (normalized) {
+    case "positive":
+    case "neutral":
+    case "caution":
+    case "boundary":
+    case "action_required":
+    case "critical":
+      return normalized;
+    default:
+      return "neutral";
+  }
 }
-function humanizeToken(value) {
+function normalizeUrgency(value) {
+  const normalized = normalizeToken2(value);
+  switch (normalized) {
+    case "low":
+    case "normal":
+    case "elevated":
+    case "high":
+      return normalized;
+    default:
+      return "normal";
+  }
+}
+function normalizeConfidence(value) {
+  const normalized = normalizeToken2(value);
+  switch (normalized) {
+    case "exact":
+    case "estimated":
+    case "unknown":
+      return normalized;
+    default:
+      return "exact";
+  }
+}
+function normalizeEvidenceSource(value) {
+  const normalized = normalizeToken2(value);
+  switch (normalized) {
+    case "contract":
+    case "engine":
+    case "run_summary":
+    case "needs_your_yes":
+    case "fallback":
+      return normalized;
+    default:
+      return "fallback";
+  }
+}
+function normalizePrivacyMode(value) {
+  const normalized = normalizeToken2(value);
+  switch (normalized) {
+    case "privacy_restricted":
+    case "unknown":
+      return normalized;
+    default:
+      return "privacy_safe";
+  }
+}
+function normalizeToken2(value) {
   const cleaned = cleanText(value);
-  if (!cleaned) return "";
-  return cleaned.replace(/[_-]+/g, " ");
+  if (!cleaned) return null;
+  return cleaned.replace(/([a-z\d])([A-Z])/g, "$1_$2").replace(/[\s\-]+/g, "_").toLowerCase();
 }
 function cleanText(value) {
   if (typeof value !== "string") return null;
@@ -3187,14 +3865,6 @@ function currentSessionId() {
 }
 
 // src/agent-run-progress.ts
-function bucketFileCount2(count) {
-  if (count === null || count === void 0 || count < 0) return "unknown";
-  if (count === 0) return "0";
-  if (count <= 2) return "1_to_2";
-  if (count <= 5) return "3_to_5";
-  if (count <= 10) return "6_to_10";
-  return "over_10";
-}
 function bucketMinutes(minutes) {
   if (minutes === null || minutes === void 0 || minutes < 0) return "unknown";
   if (minutes < 15) return "under_15";
@@ -3223,7 +3893,7 @@ function startedPayload(input) {
     started_by: "agent",
     initial_call_key: "good_to_run",
     estimated_minutes_bucket: bucketMinutes(input.estimatedMinutes),
-    estimated_files_bucket: bucketFileCount2(input.estimatedFiles),
+    estimated_files_bucket: bucketFileCount(input.estimatedFiles ?? void 0),
     delivery_mode: "auto"
   };
 }
@@ -3289,49 +3959,17 @@ function normalizeFailureCategory(value) {
 }
 
 // src/agent-run-reporter.ts
-import { randomUUID } from "node:crypto";
-var REPORT_AGENT_RUN_EVENT_MUTATION2 = `
-  mutation ReportAgentRunEvent($input: ReportAgentRunEventInput!) {
-    reportAgentRunEvent(input: $input) {
-      ok
-      error {
-        code
-        message
-        details
-      }
-      event {
-        eventId
-        eventType
-      }
-    }
-  }
-`;
 async function reportAgentRunEventCompat(client, input) {
   try {
-    const eventClient = client;
-    const eventInput = buildSdkEventInput(input);
-    if (typeof eventClient.reportAgentRunEvent === "function") {
-      const result2 = await eventClient.reportAgentRunEvent(eventInput);
-      return isSuccessfulReportResult(result2);
-    }
-    const graphql = getLowLevelGraphQLClient(client);
-    if (!graphql) return false;
-    const result = await graphql.request(REPORT_AGENT_RUN_EVENT_MUTATION2, {
-      input: serializeAgentRunEventForGraphQL(eventInput)
-    });
-    return isSuccessfulReportResult(
-      result?.reportAgentRunEvent
-    );
+    const result = await client.reportAgentRunEvent(buildSdkEventInput(input));
+    return isSuccessfulReportResult(result);
   } catch {
     return false;
   }
 }
 function buildSdkEventInput(input) {
   return stripUndefined3({
-    eventId: randomUUID(),
     eventType: input.eventType,
-    schemaVersion: 1,
-    occurredAt: (/* @__PURE__ */ new Date()).toISOString(),
     runId: input.runId,
     workspaceRef: "unknown",
     source: "claude_code",
@@ -3344,28 +3982,6 @@ function buildSdkEventInput(input) {
     proposalRef: input.proposalRef ?? input.runId,
     payload: input.payload,
     progressPayload: input.progressPayload
-  });
-}
-function toAgentRunGraphQLEnum2(value) {
-  return /^\d/.test(value) ? `_${value.toUpperCase()}` : value.toUpperCase();
-}
-function serializeAgentRunEventForGraphQL(input) {
-  const progressPayload2 = input.progressPayload;
-  const serializedProgress = progressPayload2 ? stripUndefined3({
-    ...progressPayload2,
-    filesReadBucket: toAgentRunGraphQLEnum2(String(progressPayload2.filesReadBucket)),
-    filesModifiedBucket: toAgentRunGraphQLEnum2(String(progressPayload2.filesModifiedBucket)),
-    validationLevel: String(progressPayload2.validationLevel).toUpperCase(),
-    validationStatus: String(progressPayload2.validationStatus).toUpperCase(),
-    progressState: String(progressPayload2.progressState).toUpperCase(),
-    scopeGrowthBucket: progressPayload2.scopeGrowthBucket ? toAgentRunGraphQLEnum2(String(progressPayload2.scopeGrowthBucket)) : void 0,
-    confidenceBucket: progressPayload2.confidenceBucket ? String(progressPayload2.confidenceBucket).toUpperCase() : void 0,
-    spendEstimateBucket: progressPayload2.spendEstimateBucket ? toAgentRunGraphQLEnum2(String(progressPayload2.spendEstimateBucket)) : void 0
-  }) : void 0;
-  return stripUndefined3({
-    ...input,
-    privacyMode: "METADATA_ONLY",
-    progressPayload: serializedProgress
   });
 }
 function isSuccessfulReportResult(result) {
@@ -3749,7 +4365,7 @@ async function applyCanonicalAction(rawInput, deps) {
     );
   }
   const runActionContext = await deps.getRunActionContext(runId);
-  const allowedActionKeys = canonicalAllowedActionKeys2(runActionContext?.allowedActionKeys ?? null);
+  const allowedActionKeys = canonicalAllowedActionKeys(runActionContext?.allowedActionKeys ?? null);
   if (allowedActionKeys && !allowedActionKeys.includes(normalizedAction)) {
     return failure("not_allowed", "Action is not allowed for the target HeadsDown run.", {
       actionKey: normalizedAction,
@@ -3893,7 +4509,7 @@ function defaultHandoffKind(actionKey) {
 function isQueuedMarkerAction(actionKey) {
   return QUEUED_MARKER_ACTIONS.has(actionKey);
 }
-function canonicalAllowedActionKeys2(values) {
+function canonicalAllowedActionKeys(values) {
   if (!values) return null;
   return [
     ...new Set(
@@ -3994,8 +4610,8 @@ function resolveCurrentRunContext(input) {
   const currentRun = resolveCurrentRun(input.activeRun, input.overview?.runSummaries ?? null);
   const overviewCall = input.overview?.headsdownCall ?? null;
   const callKey = normalizeHeadsDownCallKey(currentRun?.callKey) ?? resolveOverviewCallKey(overviewCall);
-  const summaryActionKeys = normalizeActionKeys(currentRun?.allowedActionKeys ?? []);
-  const overviewActionKeys = normalizeActionKeys(
+  const summaryActionKeys = normalizeActionKeys2(currentRun?.allowedActionKeys ?? []);
+  const overviewActionKeys = normalizeActionKeys2(
     overviewCall?.allowedActionKeys && overviewCall.allowedActionKeys.length > 0 ? overviewCall.allowedActionKeys : overviewCall?.allowedActionKnownKeys
   );
   return {
@@ -4021,13 +4637,19 @@ function resolveCurrentRun(activeRun, runSummaries) {
 function resolveOverviewCallKey(call) {
   return normalizeHeadsDownCallKey(call?.knownKey) ?? normalizeHeadsDownCallKey(call?.key);
 }
-function normalizeActionKeys(values) {
+function normalizeActionKeys2(values) {
   if (!values || values.length === 0) return [];
   return [
     ...new Set(
       values.map((value) => normalizeHeadsDownCallKey(value)).filter((value) => !!value)
     )
   ];
+}
+function normalizeHeadsDownCallKey(value) {
+  if (typeof value !== "string") return null;
+  const trimmed = value.replace(/[\r\n\t]+/g, " ").trim();
+  if (!trimmed) return null;
+  return trimmed.replace(/([a-z\d])([A-Z])/g, "$1_$2").replace(/[\s\-]+/g, "_").toLowerCase();
 }
 
 // src/server.ts
@@ -4036,57 +4658,6 @@ function createActionMarkerStore() {
   return new LocalActionMarkerStore();
 }
 var activeTracker = null;
-var ACTIVE_AVAILABILITY_OVERRIDE_QUERY = `
-  query ActiveAvailabilityOverride {
-    activeAvailabilityOverride {
-      id
-      mode
-      reason
-      source
-      expiresAt
-      cancelledAt
-      expiredAt
-      createdById
-      cancelledById
-      insertedAt
-      updatedAt
-    }
-  }
-`;
-var CREATE_AVAILABILITY_OVERRIDE_MUTATION = `
-  mutation CreateAvailabilityOverride($input: AvailabilityOverrideInput!) {
-    createAvailabilityOverride(input: $input) {
-      id
-      mode
-      reason
-      source
-      expiresAt
-      cancelledAt
-      expiredAt
-      createdById
-      cancelledById
-      insertedAt
-      updatedAt
-    }
-  }
-`;
-var CANCEL_AVAILABILITY_OVERRIDE_MUTATION = `
-  mutation CancelAvailabilityOverride($id: ID!, $reason: String, $source: String) {
-    cancelAvailabilityOverride(id: $id, reason: $reason, source: $source) {
-      id
-      mode
-      reason
-      source
-      expiresAt
-      cancelledAt
-      expiredAt
-      createdById
-      cancelledById
-      insertedAt
-      updatedAt
-    }
-  }
-`;
 function createServer() {
   const server = new Server(
     { name: "headsdown", version: "0.1.0" },
@@ -4819,35 +5390,37 @@ async function handleOverride(args) {
   const actorClient = withActorContext(client, "headsdown_override");
   const action = typeof args.action === "string" ? args.action : "get";
   if (action === "get") {
-    const override = await getActiveAvailabilityOverrideCompat(actorClient);
+    const override = await actorClient.getActiveAvailabilityOverride();
     return textResult(JSON.stringify({ override }, null, 2));
   }
   if (action === "set") {
     if (typeof args.mode !== "string") {
       return errorResult("The 'mode' parameter is required for action='set'.");
     }
-    const override = await createAvailabilityOverrideCompat(actorClient, {
-      mode: args.mode,
-      durationMinutes: typeof args.duration_minutes === "number" ? args.duration_minutes : void 0,
-      expiresAt: typeof args.expires_at === "string" ? args.expires_at : void 0,
-      reason: typeof args.reason === "string" ? args.reason : void 0,
-      source: "claude-code"
-    });
+    const override = await actorClient.createAvailabilityOverride(
+      availabilityOverrideInput({
+        mode: args.mode,
+        durationMinutes: typeof args.duration_minutes === "number" ? args.duration_minutes : void 0,
+        expiresAt: typeof args.expires_at === "string" ? args.expires_at : void 0,
+        reason: typeof args.reason === "string" ? args.reason : void 0,
+        source: "claude-code"
+      })
+    );
     return textResult(JSON.stringify({ override }, null, 2));
   }
   if (action === "clear") {
     const idArg = typeof args.id === "string" ? args.id : void 0;
-    const activeOverride = idArg ? null : await getActiveAvailabilityOverrideCompat(actorClient);
+    const activeOverride = idArg ? null : await actorClient.getActiveAvailabilityOverride();
     const targetId = idArg ?? activeOverride?.id;
     if (!targetId) {
       return textResult(
         JSON.stringify({ override: null, message: "No active override to clear." }, null, 2)
       );
     }
-    const override = await cancelAvailabilityOverrideCompat(
-      actorClient,
+    const override = await actorClient.cancelAvailabilityOverride(
       targetId,
-      typeof args.reason === "string" ? args.reason : void 0
+      typeof args.reason === "string" ? args.reason : void 0,
+      "claude-code"
     );
     return textResult(JSON.stringify({ override }, null, 2));
   }
@@ -5157,53 +5730,27 @@ function buildDelegationGrantFilterInput(args) {
     source: typeof args.source === "string" ? args.source : void 0
   };
 }
-async function createAvailabilityOverrideCompat(client, input) {
-  const nativeMethod = client.createAvailabilityOverride;
-  if (typeof nativeMethod === "function") {
-    return nativeMethod(input);
+function availabilityOverrideInput(input) {
+  if (input.expiresAt) {
+    return {
+      mode: input.mode,
+      expiresAt: input.expiresAt,
+      reason: input.reason,
+      source: input.source
+    };
   }
-  const graphql = getLowLevelGraphQLClient(client);
-  if (!graphql) {
-    throw new Error("Availability override APIs are unavailable in this @headsdown/sdk version.");
+  if (typeof input.durationMinutes === "number") {
+    return {
+      mode: input.mode,
+      durationMinutes: input.durationMinutes,
+      reason: input.reason,
+      source: input.source
+    };
   }
-  const data = await graphql.request(CREATE_AVAILABILITY_OVERRIDE_MUTATION, { input });
-  const override = data.createAvailabilityOverride ?? null;
-  if (!override) {
-    throw new Error("HeadsDown API returned no availability override data.");
-  }
-  return override;
-}
-async function getActiveAvailabilityOverrideCompat(client) {
-  const nativeMethod = client.getActiveAvailabilityOverride;
-  if (typeof nativeMethod === "function") {
-    return nativeMethod();
-  }
-  const graphql = getLowLevelGraphQLClient(client);
-  if (!graphql) {
-    throw new Error("Availability override APIs are unavailable in this @headsdown/sdk version.");
-  }
-  const data = await graphql.request(ACTIVE_AVAILABILITY_OVERRIDE_QUERY);
-  return data.activeAvailabilityOverride ?? null;
-}
-async function cancelAvailabilityOverrideCompat(client, id, reason) {
-  const nativeMethod = client.cancelAvailabilityOverride;
-  if (typeof nativeMethod === "function") {
-    return nativeMethod(id, reason);
-  }
-  const graphql = getLowLevelGraphQLClient(client);
-  if (!graphql) {
-    throw new Error("Availability override APIs are unavailable in this @headsdown/sdk version.");
-  }
-  const data = await graphql.request(CANCEL_AVAILABILITY_OVERRIDE_MUTATION, {
-    id,
-    reason,
-    source: "claude-code"
-  });
-  const override = data.cancelAvailabilityOverride ?? null;
-  if (!override) {
-    throw new Error("HeadsDown API returned no cancelled override data.");
-  }
-  return override;
+  throw new ValidationError(
+    "Either duration_minutes or expires_at is required.",
+    "duration_minutes"
+  );
 }
 function getCredentialsPathOverride() {
   const value = process.env.HEADSDOWN_CREDENTIALS_PATH;

@@ -1,5 +1,4 @@
 import type { AgentControlOverviewView, AgentRunSummaryView } from "./agent-control.js";
-import { normalizeHeadsDownCallKey } from "./headsdown-call-keys.js";
 import { resolveEffectiveAttentionWindow, isWithinWarningWindow } from "./time-box.js";
 import type { AttentionWindowInput, EffectiveAttentionWindow, TimeBoxState } from "./time-box.js";
 
@@ -239,4 +238,16 @@ function normalizeActionKeys(values: string[] | null | undefined): string[] {
         .filter((value): value is string => !!value),
     ),
   ];
+}
+
+function normalizeHeadsDownCallKey(value: string | null | undefined): string | null {
+  if (typeof value !== "string") return null;
+
+  const trimmed = value.replace(/[\r\n\t]+/g, " ").trim();
+  if (!trimmed) return null;
+
+  return trimmed
+    .replace(/([a-z\d])([A-Z])/g, "$1_$2")
+    .replace(/[\s\-]+/g, "_")
+    .toLowerCase();
 }

@@ -1,22 +1,5 @@
+import { bucketFileCount, bucketScopeGrowth } from "@headsdown/sdk/agent";
 import type { AgentRunState, RunTerminalOutcome } from "./agent-run-state.js";
-
-export function bucketFileCount(count: number | null | undefined): string {
-  if (count === null || count === undefined || count < 0) return "unknown";
-  if (count === 0) return "0";
-  if (count <= 2) return "1_to_2";
-  if (count <= 5) return "3_to_5";
-  if (count <= 10) return "6_to_10";
-  return "over_10";
-}
-
-export function bucketScopeGrowth(count: number | null | undefined): string {
-  if (count === null || count === undefined || count < 0) return "unknown";
-  if (count === 0) return "none";
-  if (count <= 2) return "1_to_2_files";
-  if (count <= 5) return "3_to_5_files";
-  if (count <= 10) return "6_to_10_files";
-  return "over_10_files";
-}
 
 export function bucketMinutes(minutes: number | null | undefined): string {
   if (minutes === null || minutes === undefined || minutes < 0) return "unknown";
@@ -56,7 +39,7 @@ export function startedPayload(input: {
     started_by: "agent",
     initial_call_key: "good_to_run",
     estimated_minutes_bucket: bucketMinutes(input.estimatedMinutes),
-    estimated_files_bucket: bucketFileCount(input.estimatedFiles),
+    estimated_files_bucket: bucketFileCount(input.estimatedFiles ?? undefined),
     delivery_mode: "auto",
   };
 }
@@ -80,7 +63,7 @@ export function progressPayload(state: AgentRunState, now = new Date()): Record<
     toolWriteCount: state.toolWriteCount,
     toolExternalCount: state.toolExternalCount,
     filesReadBucket: "unknown",
-    filesModifiedBucket: bucketFileCount(state.filesModifiedCount),
+    filesModifiedBucket: bucketFileCount(state.filesModifiedCount ?? undefined),
     validationLevel: "unknown",
     validationStatus: "unknown",
     retryCount: state.retryCount,
@@ -88,7 +71,7 @@ export function progressPayload(state: AgentRunState, now = new Date()): Record<
     scopeChanged,
     redirectCount: state.redirectCount,
     progressState: "working",
-    scopeGrowthBucket: bucketScopeGrowth(state.filesModifiedCount),
+    scopeGrowthBucket: bucketScopeGrowth(state.filesModifiedCount ?? undefined),
     confidenceBucket: "medium",
     spendEstimateBucket: "unknown",
   };

@@ -1,23 +1,8 @@
-import { randomUUID } from "node:crypto";
-import type { HeadsDownClient } from "@headsdown/sdk";
-import { getLowLevelGraphQLClient } from "./sdk-compat.js";
-
-const REPORT_AGENT_RUN_EVENT_MUTATION = `
-  mutation ReportAgentRunEvent($input: ReportAgentRunEventInput!) {
-    reportAgentRunEvent(input: $input) {
-      ok
-      error {
-        code
-        message
-        details
-      }
-      event {
-        eventId
-        eventType
-      }
-    }
-  }
-`;
+import type {
+  AgentRunEventInput as SdkAgentRunEventInput,
+  AgentRunProgressMetadata,
+  HeadsDownClient,
+} from "@headsdown/sdk";
 
 export interface AgentRunEventInput {
   runId: string;
@@ -35,38 +20,16 @@ export async function reportAgentRunEventCompat(
   input: AgentRunEventInput,
 ): Promise<boolean> {
   try {
-    const eventClient = client as unknown as {
-      reportAgentRunEvent?: (value: Record<string, unknown>) => Promise<unknown>;
-    };
-
-    const eventInput = buildSdkEventInput(input);
-
-    if (typeof eventClient.reportAgentRunEvent === "function") {
-      const result = await eventClient.reportAgentRunEvent(eventInput);
-      return isSuccessfulReportResult(result);
-    }
-
-    const graphql = getLowLevelGraphQLClient(client);
-    if (!graphql) return false;
-
-    const result = await graphql.request(REPORT_AGENT_RUN_EVENT_MUTATION, {
-      input: serializeAgentRunEventForGraphQL(eventInput),
-    });
-
-    return isSuccessfulReportResult(
-      (result as { reportAgentRunEvent?: unknown } | null)?.reportAgentRunEvent,
-    );
+    const result = await client.reportAgentRunEvent(buildSdkEventInput(input));
+    return isSuccessfulReportResult(result);
   } catch {
     return false;
   }
 }
 
-export function buildSdkEventInput(input: AgentRunEventInput): Record<string, unknown> {
+export function buildSdkEventInput(input: AgentRunEventInput): SdkAgentRunEventInput {
   return stripUndefined({
-    eventId: randomUUID(),
     eventType: input.eventType,
-    schemaVersion: 1,
-    occurredAt: new Date().toISOString(),
     runId: input.runId,
     workspaceRef: "unknown",
     source: "claude_code",
@@ -78,41 +41,8 @@ export function buildSdkEventInput(input: AgentRunEventInput): Record<string, un
     correlationId: input.correlationId ?? input.runId,
     proposalRef: input.proposalRef ?? input.runId,
     payload: input.payload,
-    progressPayload: input.progressPayload,
-  });
-}
-
-function toAgentRunGraphQLEnum(value: string): string {
-  return /^\d/.test(value) ? `_${value.toUpperCase()}` : value.toUpperCase();
-}
-
-function serializeAgentRunEventForGraphQL(input: Record<string, unknown>): Record<string, unknown> {
-  const progressPayload = input.progressPayload as Record<string, unknown> | undefined;
-  const serializedProgress = progressPayload
-    ? stripUndefined({
-        ...progressPayload,
-        filesReadBucket: toAgentRunGraphQLEnum(String(progressPayload.filesReadBucket)),
-        filesModifiedBucket: toAgentRunGraphQLEnum(String(progressPayload.filesModifiedBucket)),
-        validationLevel: String(progressPayload.validationLevel).toUpperCase(),
-        validationStatus: String(progressPayload.validationStatus).toUpperCase(),
-        progressState: String(progressPayload.progressState).toUpperCase(),
-        scopeGrowthBucket: progressPayload.scopeGrowthBucket
-          ? toAgentRunGraphQLEnum(String(progressPayload.scopeGrowthBucket))
-          : undefined,
-        confidenceBucket: progressPayload.confidenceBucket
-          ? String(progressPayload.confidenceBucket).toUpperCase()
-          : undefined,
-        spendEstimateBucket: progressPayload.spendEstimateBucket
-          ? toAgentRunGraphQLEnum(String(progressPayload.spendEstimateBucket))
-          : undefined,
-      })
-    : undefined;
-
-  return stripUndefined({
-    ...input,
-    privacyMode: "METADATA_ONLY",
-    progressPayload: serializedProgress,
-  });
+    progressPayload: input.progressPayload as AgentRunProgressMetadata | undefined,
+  }) as SdkAgentRunEventInput;
 }
 
 function isSuccessfulReportResult(result: unknown): boolean {

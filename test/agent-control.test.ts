@@ -4,10 +4,13 @@ import { renderHeadsDownCall } from "../src/agent-control.js";
 const canonicalCalls = [
   "good_to_run",
   "keep_it_tight",
+  "attention_window_closing",
   "not_worth_starting_now",
   "off_the_clock",
-  "attention_window_closing",
+  "finish_line_friction",
+  "rabbit_hole_detected",
   "ready_to_resume",
+  "all_contained",
   "needs_your_yes",
 ];
 
@@ -78,7 +81,7 @@ describe("renderHeadsDownCall", () => {
     expect(rendered.text).not.toContain("Trap:");
   });
 
-  it("treats deprecated rabbit_hole_detected calls as safe fallback", () => {
+  it("renders rabbit_hole_detected as a canonical SDK call", () => {
     const rendered = renderHeadsDownCall({
       key: "rabbit_hole_detected",
       knownKey: "RABBIT_HOLE_DETECTED",
@@ -87,12 +90,11 @@ describe("renderHeadsDownCall", () => {
       allowedActionKeys: ["pause_and_summarize"],
     });
 
-    expect(rendered.knownKey).toBeNull();
-    expect(rendered.safeFallback).toBe(true);
-    expect(rendered.title).toBe("Needs your yes");
-    expect(rendered.text).toContain("does not recognize");
+    expect(rendered.knownKey).toBe("rabbit_hole_detected");
+    expect(rendered.safeFallback).toBe(false);
+    expect(rendered.title).toBe("Rabbit hole detected");
+    expect(rendered.text).toContain("Pause before this becomes cleanup work.");
     expect(rendered.text).toContain("Allowed actions: pause_and_summarize.");
-    expect(rendered.text).not.toContain("Pause before this becomes cleanup work.");
   });
 
   it("renders attention_window_closing with extend and wrap action guidance", () => {
@@ -132,19 +134,19 @@ describe("renderHeadsDownCall", () => {
     expect(rendered.text).toContain("Claude Code controls the model. HeadsDown controls the run.");
   });
 
-  it("uses server copy for unknown call keys while keeping a safe fallback", () => {
+  it("uses server copy for unknown call keys while keeping SDK safe actions", () => {
     const rendered = renderHeadsDownCall({
       key: "future_call",
       title: "Future call",
       body: "Server-provided safe body.",
-      allowedActionKeys: ["ask_user"],
-      allowedActionKnownKeys: ["ASK_USER"],
+      allowedActionKeys: ["pause_and_summarize"],
+      allowedActionKnownKeys: ["PAUSE_AND_SUMMARIZE"],
     });
 
     expect(rendered.safeFallback).toBe(true);
     expect(rendered.title).toBe("Future call");
     expect(rendered.text).toContain("Server-provided safe body.");
-    expect(rendered.text).toContain("Allowed actions: ask_user.");
+    expect(rendered.text).toContain("Allowed actions: pause_and_summarize.");
   });
 
   it("falls back safely for unknown call keys without server copy", () => {
@@ -152,8 +154,9 @@ describe("renderHeadsDownCall", () => {
 
     expect(rendered.safeFallback).toBe(true);
     expect(rendered.title).toBe("Needs your yes");
-    expect(rendered.text).toContain("does not recognize");
-    expect(rendered.text).toContain("Ask before going deeper");
+    expect(rendered.text).toContain(
+      "HeadsDown needs a human decision before this agent continues.",
+    );
     expect(rendered.text).toContain("Allowed actions: none.");
   });
 });
