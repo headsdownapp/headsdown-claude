@@ -328,6 +328,40 @@ describe("attention-window monitor", () => {
     expect(notices[0]).toContain("Hints: wrap soon");
   });
 
+  it("emits one notice when remainingMinutes ticks down across polls but the deadline is unchanged", async () => {
+    const counterFile = join(pluginRoot, "dist", ".tick-counter");
+    await writeCliStub(`
+      const fs = require("fs");
+      const path = ${JSON.stringify(counterFile)};
+      let tick = 0;
+      try { tick = parseInt(fs.readFileSync(path, "utf-8"), 10) || 0; } catch {}
+      tick += 1;
+      fs.writeFileSync(path, String(tick));
+      const remaining = Math.max(1, 6 - (tick - 1));
+      if (process.argv[2] === "status") {
+        console.log(JSON.stringify({
+          headsdownCall: { key: "attention_window_closing" },
+          availability: {
+            wrapUpGuidance: {
+              deadlineAt: "2026-04-29T18:00:00Z",
+              thresholdMinutes: 30,
+              remainingMinutes: remaining,
+              hints: ["wrap soon"]
+            }
+          }
+        }));
+      }
+    `);
+
+    const result = await runMonitor(`ticking-monitor-${process.pid}-${Date.now()}`, 600);
+    const notices = result.stdout
+      .split("\n")
+      .filter((line) => line.includes("[HeadsDown] Window closing"));
+
+    expect(notices).toHaveLength(1);
+    expect(notices[0]).toContain("Remaining minutes: 6");
+  });
+
   it("emits a window-closing notice when deadlineAt is null but remainingMinutes is present", async () => {
     await writeCliStub(`
       if (process.argv[2] === "status") {
