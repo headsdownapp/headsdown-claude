@@ -176,7 +176,6 @@ Non-urgent work waits for your next work window. Save the handoff and queue for 
 Recommended action: queue_for_morning
 ```
 
-
 ## What's in the Plugin
 
 ### SessionStart Hook
@@ -207,13 +206,13 @@ This closes the feedback loop for calibration without requiring Claude to rememb
 
 Before Claude writes or edits any file, the hook checks your current mode:
 
-| Mode | Behavior |
-|------|----------|
-| **online** | Silent pass. No interruption. |
-| **busy** | Allow, but inject a warning: "Submit a proposal via headsdown_propose before continuing." |
-| **busy + locked** | Ask the user for explicit permission. Status is locked = do not disturb. |
-| **limited** | Allow, but remind Claude to keep changes small and focused. |
-| **offline** | Ask the user for explicit permission. All changes should be deferred. |
+| Mode              | Behavior                                                                                  |
+| ----------------- | ----------------------------------------------------------------------------------------- |
+| **online**        | Silent pass. No interruption.                                                             |
+| **busy**          | Allow, but inject a warning: "Submit a proposal via headsdown_propose before continuing." |
+| **busy + locked** | Ask the user for explicit permission. Status is locked = do not disturb.                  |
+| **limited**       | Allow, but remind Claude to keep changes small and focused.                               |
+| **offline**       | Ask the user for explicit permission. All changes should be deferred.                     |
 
 Behavior is controlled by trust level (see [Trust levels](#trust-levels) below).
 
@@ -242,6 +241,7 @@ This allows Claude to include in-progress context in its compaction summary so i
 ### Slash Commands
 
 Quick slash commands for direct access:
+
 - `/headsdown:status` - See your current availability, mode, and execution policy
 - `/headsdown:auth` - Authenticate with HeadsDown via Device Flow
 - `/headsdown:timebox <duration>` - Declare a session-scoped local deadline like `30m`, `45m`, `1h`, or `1h30m`
@@ -256,6 +256,7 @@ Quick slash commands for direct access:
 A SKILL.md that teaches Claude when and how to check availability. Claude loads this contextually before starting tasks, so it knows to check your status and submit proposals for non-trivial work.
 
 Key behaviors the skill teaches:
+
 - Read both axes (mode + execution directive) before starting
 - Decompose tasks that exceed the remaining attention budget into window-sized slices
 - Match commit cadence to execution policy (frequent small commits in wrap_up, batched in full_depth)
@@ -270,84 +271,85 @@ Ten tools registered via the plugin's MCP server:
 **`headsdown_status`** - Check your current availability. Returns both axes: `mode` (user-set) and `executionDirective` (schedule-derived with `code`, `summary`, `hardLimits`).
 
 **`headsdown_propose`** - Submit a task proposal. Returns a verdict:
+
 - **Approved**: Claude proceeds
 - **Deferred**: Claude informs you and suggests postponing or reducing scope
 
-| Parameter | Required | Description |
-|-----------|----------|-------------|
-| `description` | Yes | What Claude plans to do |
-| `estimated_files` | No | Number of files to modify |
-| `estimated_minutes` | No | Expected duration |
-| `scope_summary` | No | Which modules, what kind of changes |
-| `source_ref` | No | Ticket number, PR URL, etc. |
-| `delivery_mode` | No | `auto` (default), `wrap_up`, or `full_depth` to override execution policy |
+| Parameter           | Required | Description                                                               |
+| ------------------- | -------- | ------------------------------------------------------------------------- |
+| `description`       | Yes      | What Claude plans to do                                                   |
+| `estimated_files`   | No       | Number of files to modify                                                 |
+| `estimated_minutes` | No       | Expected duration                                                         |
+| `scope_summary`     | No       | Which modules, what kind of changes                                       |
+| `source_ref`        | No       | Ticket number, PR URL, etc.                                               |
+| `delivery_mode`     | No       | `auto` (default), `wrap_up`, or `full_depth` to override execution policy |
 
 **`headsdown_interrupt`** - Check whether it's appropriate to interrupt the user mid-task. Call this before asking non-critical clarifying questions. Returns `{ allowed, reason, autoResponse }`. If `allowed` is false, use `autoResponse` text instead of asking.
 
-| Parameter | Required | Description |
-|-----------|----------|-------------|
-| `handle` | No | Interrupt type: `clarifying_question`, `scope_change`, `error`, `status_update` |
+| Parameter | Required | Description                                                                     |
+| --------- | -------- | ------------------------------------------------------------------------------- |
+| `handle`  | No       | Interrupt type: `clarifying_question`, `scope_change`, `error`, `status_update` |
 
 **`headsdown_continuation`** - Save or load a structured continuation artifact for resumable work sessions.
 
-| Parameter | Required | Description |
-|-----------|----------|-------------|
-| `action` | Yes | `save` or `load` |
-| `branch` | No | Current git branch (for save) |
-| `completed_steps` | No | Steps finished this session (for save) |
-| `pending_steps` | No | Steps remaining (for save) |
-| `dirty_files` | No | Files with uncommitted changes (for save) |
-| `open_decisions` | No | Questions needing user input (for save) |
-| `resume_instruction` | No | One-sentence next-step for the next session (for save) |
+| Parameter            | Required | Description                                            |
+| -------------------- | -------- | ------------------------------------------------------ |
+| `action`             | Yes      | `save` or `load`                                       |
+| `branch`             | No       | Current git branch (for save)                          |
+| `completed_steps`    | No       | Steps finished this session (for save)                 |
+| `pending_steps`      | No       | Steps remaining (for save)                             |
+| `dirty_files`        | No       | Files with uncommitted changes (for save)              |
+| `open_decisions`     | No       | Questions needing user input (for save)                |
+| `resume_instruction` | No       | One-sentence next-step for the next session (for save) |
 
 **`headsdown_digest`** - View notifications and messages that arrived during focus time. Returns grouped summaries by source and actor. Read-only.
 
-| Parameter | Required | Description |
-|-----------|----------|-------------|
-| `latest` | No | Limit to N most recent summaries (default: 20) |
+| Parameter | Required | Description                                    |
+| --------- | -------- | ---------------------------------------------- |
+| `latest`  | No       | Limit to N most recent summaries (default: 20) |
 
 **`headsdown_deferred`** - Review and resolve metadata-only deferred decisions captured during autopilot runs. Returns derived facts only — never raw transcript or question text.
 
-| Parameter | Required | Description |
-|-----------|----------|-------------|
-| `action` | No | `list` (default), `view`, `approve`, `override`, `refine`, or `dismiss` |
-| `decision_id` | No | Deferred decision id for view or resolution actions |
-| `latest` | No | Limit to N recent event records before filtering (default: 50) |
+| Parameter     | Required | Description                                                             |
+| ------------- | -------- | ----------------------------------------------------------------------- |
+| `action`      | No       | `list` (default), `view`, `approve`, `override`, `refine`, or `dismiss` |
+| `decision_id` | No       | Deferred decision id for view or resolution actions                     |
+| `latest`      | No       | Limit to N recent event records before filtering (default: 50)          |
 
 **`headsdown_grants`** - List/create/revoke delegation grants for actor-scoped authorization.
 
-| Parameter | Required | Description |
-|-----------|----------|-------------|
-| `action` | No | list_active, list, create, revoke, revoke_many (default: list_active) |
-| `id` | No | Grant id for revoke |
-| `scope` | No | session, workspace, agent |
-| `session_id` | No | Session identifier |
-| `workspace_ref` | No | Workspace reference |
-| `agent_id` | No | Agent identifier |
-| `permissions` | No | availability_override_create, availability_override_cancel, preset_apply |
-| `duration_minutes` | No | Relative expiry for create |
-| `expires_at` | No | Absolute expiry for create |
-| `source` | No | Audit source label |
-| `active` | No | Active filter for list/revoke_many |
+| Parameter          | Required | Description                                                              |
+| ------------------ | -------- | ------------------------------------------------------------------------ |
+| `action`           | No       | list_active, list, create, revoke, revoke_many (default: list_active)    |
+| `id`               | No       | Grant id for revoke                                                      |
+| `scope`            | No       | session, workspace, agent                                                |
+| `session_id`       | No       | Session identifier                                                       |
+| `workspace_ref`    | No       | Workspace reference                                                      |
+| `agent_id`         | No       | Agent identifier                                                         |
+| `permissions`      | No       | availability_override_create, availability_override_cancel, preset_apply |
+| `duration_minutes` | No       | Relative expiry for create                                               |
+| `expires_at`       | No       | Absolute expiry for create                                               |
+| `source`           | No       | Audit source label                                                       |
+| `active`           | No       | Active filter for list/revoke_many                                       |
 
 **`headsdown_override`** - Get/set/clear temporary availability overrides.
 
-| Parameter | Required | Description |
-|-----------|----------|-------------|
-| `action` | No | get, set, clear (default: get) |
-| `id` | No | Override id for clear |
-| `mode` | No | online, busy, limited, offline (required for set) |
-| `duration_minutes` | No | Relative expiry for set |
-| `expires_at` | No | Absolute expiry for set |
-| `reason` | No | Optional reason for set/clear |
+| Parameter          | Required | Description                                       |
+| ------------------ | -------- | ------------------------------------------------- |
+| `action`           | No       | get, set, clear (default: get)                    |
+| `id`               | No       | Override id for clear                             |
+| `mode`             | No       | online, busy, limited, offline (required for set) |
+| `duration_minutes` | No       | Relative expiry for set                           |
+| `expires_at`       | No       | Absolute expiry for set                           |
+| `reason`           | No       | Optional reason for set/clear                     |
 
 **`headsdown_report`** - Report the outcome of a task approved via `headsdown_propose`. The Stop hook auto-reports `completed`/`partially_completed` at session end; call this manually for `failed`, `cancelled`, or `timed_out`.
 
-| Parameter | Required | Description |
-|-----------|----------|-------------|
-| `outcome` | Yes | completed, failed, partially_completed, cancelled, timed_out |
-| `error_category` | No | Category of error if failed |
-| `tests_passed` | No | Whether changes pass tests |
+| Parameter        | Required | Description                                                  |
+| ---------------- | -------- | ------------------------------------------------------------ |
+| `outcome`        | Yes      | completed, failed, partially_completed, cancelled, timed_out |
+| `error_category` | No       | Category of error if failed                                  |
+| `tests_passed`   | No       | Whether changes pass tests                                   |
 
 **`headsdown_auth`** - Authenticate via Device Flow.
 
@@ -363,11 +365,11 @@ Control how strictly the PreToolUse hook enforces availability. Configuration li
 }
 ```
 
-| Level | Behavior |
-|-------|----------|
-| `advisory` (default) | Warns Claude; only blocks writes when locked or offline |
-| `active` | Auto-approves writes when an approved proposal exists; warns otherwise |
-| `guarded` | Requires an approved proposal before any write in busy/limited/offline modes |
+| Level                | Behavior                                                                     |
+| -------------------- | ---------------------------------------------------------------------------- |
+| `advisory` (default) | Warns Claude; only blocks writes when locked or offline                      |
+| `active`             | Auto-approves writes when an approved proposal exists; warns otherwise       |
+| `guarded`            | Requires an approved proposal before any write in busy/limited/offline modes |
 
 Sensitive path patterns always force an explicit permission prompt regardless of trust level.
 
@@ -414,17 +416,12 @@ headsdown-claude/
 │   └── headsdown.md          # /headsdown slash command
 ├── hooks/
 │   ├── hooks.json            # Hook configuration
-│   ├── session-start.sh      # Injects availability at session start (SessionStart)
-│   ├── session-end.sh        # Auto-reports outcome at session end (Stop)
-│   ├── autopilot-detect-deferral.sh # Records metadata-only deferrals and nudges (Stop)
-│   ├── autopilot-intercept-ask.sh # Defers AskUserQuestion during autopilot (PreToolUse)
-│   ├── autopilot-prompt.sh # Injects fresh SDK autopilot policy context (UserPromptSubmit)
-│   ├── check-availability.sh # Gates file modifications by mode (PreToolUse)
-│   ├── post-tool-use.sh      # Tracks file modification count (PostToolUse)
-│   └── pre-compact.sh        # Preserves proposal context before compaction (PreCompact)
+│   ├── dispatch.sh           # Shared thin hook dispatcher
+│   └── stop-report.sh        # Per-turn Stop report shim
 ├── .mcp.json                 # MCP server config
 ├── src/
 │   ├── autopilot/            # Local autopilot state, deferral detection, and CLI handlers
+│   ├── hooks/                # TypeScript hook handlers
 │   ├── index.ts              # MCP server entry point
 │   ├── server.ts             # Tool handlers (9 tools)
 │   └── cli.ts                # Lightweight CLI for hooks/commands
@@ -436,12 +433,12 @@ headsdown-claude/
 
 ## Configuration
 
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `HEADSDOWN_API_URL` | `https://headsdown.app` | API endpoint (for development) |
-| `HEADSDOWN_API_KEY` | (from credentials file) | Override the stored API key |
+| Variable                          | Default                                     | Description                                       |
+| --------------------------------- | ------------------------------------------- | ------------------------------------------------- |
+| `HEADSDOWN_API_URL`               | `https://headsdown.app`                     | API endpoint (for development)                    |
+| `HEADSDOWN_API_KEY`               | (from credentials file)                     | Override the stored API key                       |
 | `HEADSDOWN_AUTOPILOT_CONFIG_PATH` | `~/.config/headsdown/autopilot-config.json` | Override the local autopilot deferral config path |
-| `HEADSDOWN_AUTOPILOT_STATE_PATH` | `~/.config/headsdown/autopilot-state.json` | Override the local autopilot state path |
+| `HEADSDOWN_AUTOPILOT_STATE_PATH`  | `~/.config/headsdown/autopilot-state.json`  | Override the local autopilot state path           |
 
 ### Autopilot deferral detection and anti-stuck nudges
 
@@ -460,9 +457,7 @@ Default autopilot behavior is enabled for `offline` mode. `limited` mode is opt-
   "latitudeDefault": "balanced",
   "identityActionOverrides": [],
   "houseRules": [],
-  "patterns": [
-    { "key": "needs_decision", "pattern": "NEEDS_DECISION", "urgencyBucket": "high" }
-  ]
+  "patterns": [{ "key": "needs_decision", "pattern": "NEEDS_DECISION", "urgencyBucket": "high" }]
 }
 ```
 

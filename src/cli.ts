@@ -17,6 +17,7 @@ import { reportRunOutcome, reportRunProgress } from "./agent-run-events.js";
 import { getActiveRunStateForSession } from "./agent-run-state.js";
 import { LocalActionMarkerStore } from "./headsdown-action-executor.js";
 import { autopilotCli } from "./autopilot/cli.js";
+import { hookCli } from "./hooks/index.js";
 import { LocalTimeBoxStore } from "./time-box-store.js";
 import {
   buildTimeBoxStatus,
@@ -66,6 +67,8 @@ async function main() {
       return await timeBox();
     case "autopilot":
       return await autopilotCli();
+    case "hook":
+      return await hookCli();
     default:
       process.exit(1);
   }

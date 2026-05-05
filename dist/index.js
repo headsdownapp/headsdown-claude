@@ -3979,10 +3979,15 @@ function buildSdkEventInput(input) {
     sequence: input.sequence,
     idempotencyKey: input.idempotencyKey,
     correlationId: input.correlationId ?? input.runId,
-    proposalRef: input.proposalRef ?? input.runId,
+    proposalRef: proposalRefFor(input),
     payload: input.payload,
     progressPayload: input.progressPayload
   });
+}
+function proposalRefFor(input) {
+  if (input.proposalRef) return input.proposalRef;
+  if (input.eventType.startsWith("integration.")) return void 0;
+  return input.runId;
 }
 function isSuccessfulReportResult(result) {
   if (!result || typeof result !== "object") return true;

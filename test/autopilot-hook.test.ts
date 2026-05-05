@@ -12,6 +12,8 @@ beforeEach(async () => {
   tempDir = join(tmpdir(), `hd-claude-autopilot-hook-${Math.random().toString(16).slice(2)}`);
   await mkdir(tempDir, { recursive: true });
   await mkdir(join(tempDir, "hooks"));
+  await cp("hooks/dispatch.sh", join(tempDir, "hooks", "dispatch.sh"));
+  await chmod(join(tempDir, "hooks", "dispatch.sh"), 0o755);
   await cp(
     "hooks/autopilot-detect-deferral.sh",
     join(tempDir, "hooks", "autopilot-detect-deferral.sh"),
@@ -31,12 +33,15 @@ describe("autopilot hooks", () => {
     );
 
     const autopilotCommand = stopCommands.find((command) =>
-      command.includes("autopilot-detect-deferral.sh"),
+      command.includes("stop-detect-deferral"),
     );
-    expect(stopCommands).toContain("bash ${CLAUDE_PLUGIN_ROOT}/hooks/session-end.sh");
+    const reportCommand = stopCommands.find((command) =>
+      command.includes("dispatch.sh stop-report"),
+    );
+    expect(reportCommand).toBeTruthy();
     expect(autopilotCommand).toContain("CLAUDE_PLUGIN_ROOT");
     expect(stopCommands.indexOf(autopilotCommand!)).toBeLessThan(
-      stopCommands.indexOf("bash ${CLAUDE_PLUGIN_ROOT}/hooks/session-end.sh"),
+      stopCommands.indexOf(reportCommand!),
     );
   });
 
@@ -50,7 +55,7 @@ describe("autopilot hooks", () => {
       (entry: { matcher: string }) => entry.matcher === "*",
     );
 
-    expect(promptHook.hooks[0].command).toContain("autopilot-prompt.sh");
+    expect(promptHook.hooks[0].command).toContain("dispatch.sh user-prompt-submit");
     expect(promptHook.hooks[0].command).toContain("CLAUDE_PLUGIN_ROOT");
   });
 
@@ -60,7 +65,7 @@ describe("autopilot hooks", () => {
       (entry: { matcher: string }) => entry.matcher === "AskUserQuestion",
     );
 
-    expect(askHook.hooks[0].command).toContain("autopilot-intercept-ask.sh");
+    expect(askHook.hooks[0].command).toContain("dispatch.sh pre-tool-use-ask");
     expect(askHook.hooks[0].command).toContain("CLAUDE_PLUGIN_ROOT");
   });
 
@@ -187,7 +192,7 @@ async function registeredAutopilotCommand(): Promise<string> {
   const hooks = JSON.parse(await readFile("hooks/hooks.json", "utf-8"));
   const command = hooks.hooks.Stop.flatMap((entry: { hooks: Array<{ command: string }> }) =>
     entry.hooks.map((hook) => hook.command),
-  ).find((candidate: string) => candidate.includes("autopilot-detect-deferral.sh"));
+  ).find((candidate: string) => candidate.includes("stop-detect-deferral"));
   if (!command) throw new Error("autopilot hook command not registered");
   return command;
 }

@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { spawn } from "node:child_process";
@@ -43,12 +43,13 @@ describe("post-tool-use hook", () => {
     `);
 
     const result = await runScript(
-      "hooks/post-tool-use.sh",
+      "dist/cli.js",
       JSON.stringify({ tool_name: "Read" }),
       {
         CLAUDE_PLUGIN_ROOT: pluginRoot,
         CLAUDE_SESSION_ID: "read-context",
       },
+      ["hook", "post-tool-use"],
     );
 
     expect(result.code).toBe(0);
@@ -83,12 +84,13 @@ describe("post-tool-use hook", () => {
     `);
 
     const result = await runScript(
-      "hooks/post-tool-use.sh",
+      "dist/cli.js",
       JSON.stringify({ tool_name: "Write" }),
       {
         CLAUDE_PLUGIN_ROOT: pluginRoot,
         CLAUDE_SESSION_ID: "write-context",
       },
+      ["hook", "post-tool-use"],
     );
 
     expect(result.code).toBe(0);
@@ -121,12 +123,13 @@ describe("post-tool-use hook", () => {
     `);
 
     const result = await runScript(
-      "hooks/post-tool-use.sh",
+      "dist/cli.js",
       JSON.stringify({ tool_name: "Write" }),
       {
         CLAUDE_PLUGIN_ROOT: pluginRoot,
         CLAUDE_SESSION_ID: "box-error-context",
       },
+      ["hook", "post-tool-use"],
     );
 
     expect(result.code).toBe(0);
@@ -151,12 +154,13 @@ describe("post-tool-use hook", () => {
     `);
 
     const result = await runScript(
-      "hooks/post-tool-use.sh",
+      "dist/cli.js",
       JSON.stringify({ tool_name: "Read" }),
       {
         CLAUDE_PLUGIN_ROOT: pluginRoot,
         CLAUDE_SESSION_ID: "progress-command-error-context",
       },
+      ["hook", "post-tool-use"],
     );
 
     expect(result.code).toBe(0);
@@ -189,12 +193,13 @@ describe("post-tool-use hook", () => {
     `);
 
     const result = await runScript(
-      "hooks/post-tool-use.sh",
+      "dist/cli.js",
       JSON.stringify({ tool_name: "Read" }),
       {
         CLAUDE_PLUGIN_ROOT: pluginRoot,
         CLAUDE_SESSION_ID: "progress-error-context",
       },
+      ["hook", "post-tool-use"],
     );
 
     expect(result.code).toBe(0);
@@ -238,12 +243,13 @@ describe("post-tool-use hook", () => {
     `);
 
     const result = await runScript(
-      "hooks/post-tool-use.sh",
+      "dist/cli.js",
       JSON.stringify({ tool_name: "Write" }),
       {
         CLAUDE_PLUGIN_ROOT: pluginRoot,
         CLAUDE_SESSION_ID: "box-tightens-window-context",
       },
+      ["hook", "post-tool-use"],
     );
 
     expect(result.code).toBe(0);
@@ -281,12 +287,13 @@ describe("post-tool-use hook", () => {
     `);
 
     const result = await runScript(
-      "hooks/post-tool-use.sh",
+      "dist/cli.js",
       JSON.stringify({ tool_name: "Write" }),
       {
         CLAUDE_PLUGIN_ROOT: pluginRoot,
         CLAUDE_SESSION_ID: "box-context",
       },
+      ["hook", "post-tool-use"],
     );
 
     expect(result.code).toBe(0);
@@ -300,7 +307,49 @@ describe("post-tool-use hook", () => {
   });
 });
 
+describe("SessionEnd hook dispatch", () => {
+  it.each(["logout", "prompt_input_exit"])("fires exactly once for %s", async (reason) => {
+    const capturePath = join(pluginRoot, "session-end-capture.jsonl");
+    await writeCliStub(`
+      const fs = require("fs");
+      const chunks = [];
+      process.stdin.on("data", chunk => chunks.push(chunk));
+      process.stdin.on("end", () => {
+        fs.appendFileSync(${JSON.stringify(capturePath)}, JSON.stringify({ args: process.argv.slice(2), input: Buffer.concat(chunks).toString("utf-8") }) + "\\n");
+      });
+    `);
+
+    const result = await runScript(
+      "hooks/dispatch.sh",
+      JSON.stringify({ session_id: "sess_dispatch", reason }),
+      { CLAUDE_PLUGIN_ROOT: pluginRoot },
+      ["session-end"],
+    );
+
+    expect(result.code).toBe(0);
+    const lines = (await readFile(capturePath, "utf-8")).trim().split("\n");
+    expect(lines).toHaveLength(1);
+    const invocation = JSON.parse(lines[0]);
+    expect(invocation.args).toEqual(["hook", "session-end"]);
+    expect(JSON.parse(invocation.input)).toEqual({ session_id: "sess_dispatch", reason });
+  });
+});
+
 describe("attention-window monitor", () => {
+  it("exits cleanly when Claude terminates it with SIGTERM", async () => {
+    await writeCliStub(`
+      if (process.argv[2] === "status") {
+        console.log(JSON.stringify({ attentionWindowClosing: false, availability: { wrapUpGuidance: null } }));
+      }
+    `);
+
+    const result = await runMonitor(`signal-monitor-${process.pid}-${Date.now()}`, 120);
+
+    expect(result.code).toBe(0);
+    expect(result.stderr).not.toContain("Traceback");
+    expect(result.stderr).not.toContain("Error:");
+  });
+
   it("emits one notice for repeated status with the same warning fingerprint", async () => {
     await writeCliStub(`
       if (process.argv[2] === "status") {
@@ -566,9 +615,12 @@ async function runScript(
   scriptPath: string,
   input: string,
   env: Record<string, string>,
+  args: string[] = [],
 ): Promise<{ stdout: string; stderr: string; code: number | null }> {
   return await new Promise((resolve, reject) => {
-    const child = spawn("bash", [scriptPath], {
+    const command = scriptPath.endsWith(".js") ? process.execPath : "bash";
+    const commandArgs = scriptPath.endsWith(".js") ? [scriptPath, ...args] : [scriptPath, ...args];
+    const child = spawn(command, commandArgs, {
       env: { ...process.env, ...env },
       stdio: ["pipe", "pipe", "pipe"],
     });

@@ -9,7 +9,7 @@ import {
   reportRunResumed,
   reportRunStarted,
 } from "../src/agent-run-events.js";
-import { reportAgentRunEventCompat } from "../src/agent-run-reporter.js";
+import { buildSdkEventInput, reportAgentRunEventCompat } from "../src/agent-run-reporter.js";
 
 let tempDir: string;
 
@@ -265,6 +265,23 @@ describe("agent run event reporting", () => {
     await expect(
       reportRunProgress(mockClient, { proposalId: "proposal-noop" }),
     ).resolves.toBeUndefined();
+  });
+
+  it("does not invent proposal refs for integration events", () => {
+    const input = buildSdkEventInput({
+      runId: "run_session",
+      eventType: "integration.session_ended",
+      sequence: 1,
+      idempotencyKey: "run_session:integration.session_ended:sess_1",
+      payload: {
+        session_id: "sess_1",
+        outcome: "cancelled",
+        reason: "other",
+        ended_at: "2026-04-24T17:29:00Z",
+      },
+    });
+
+    expect(input.proposalRef).toBeUndefined();
   });
 
   it("reporter fallback returns false on GraphQL failures", async () => {
