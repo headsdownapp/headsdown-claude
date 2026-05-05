@@ -1170,7 +1170,7 @@ describe("Plugin structure", () => {
       expect(preCompact.hooks[0].timeout).toBeLessThanOrEqual(10);
     });
 
-    it("Stop hook triggers session-end.sh on all matchers", async () => {
+    it("Stop hook triggers stop-report dispatch on all matchers", async () => {
       const hooksPath = join(import.meta.dirname, "..", "hooks", "hooks.json");
       const raw = await readFile(hooksPath, "utf-8");
       const config = JSON.parse(raw);
@@ -1180,13 +1180,12 @@ describe("Plugin structure", () => {
 
       const stop = config.hooks.Stop[0];
       expect(stop.matcher).toBe("*");
-      const sessionEndHook = stop.hooks.find((hook: { command: string }) =>
-        hook.command.includes("session-end.sh"),
+      const stopReportHook = stop.hooks.find((hook: { command: string }) =>
+        hook.command.includes("dispatch.sh stop-report"),
       ) as { command: string; timeout: number } | undefined;
-      expect(sessionEndHook).toBeTruthy();
-      expect(sessionEndHook?.command).toContain("${CLAUDE_PLUGIN_ROOT}");
-      expect(sessionEndHook?.command).toContain("session-end.sh");
-      expect(sessionEndHook?.timeout).toBeLessThanOrEqual(10);
+      expect(stopReportHook).toBeTruthy();
+      expect(stopReportHook?.command).toContain("${CLAUDE_PLUGIN_ROOT}");
+      expect(stopReportHook?.timeout).toBeLessThanOrEqual(10);
     });
   });
 
@@ -1303,8 +1302,8 @@ describe("Plugin structure", () => {
     });
   });
 
-  describe("hooks/session-end.sh", () => {
-    const scriptPath = join(import.meta.dirname, "..", "hooks", "session-end.sh");
+  describe("hooks/stop-report.sh", () => {
+    const scriptPath = join(import.meta.dirname, "..", "hooks", "stop-report.sh");
 
     it("exists and is executable", async () => {
       const { stat } = await import("node:fs/promises");
@@ -1536,73 +1535,31 @@ describe("Plugin structure", () => {
     });
   });
 
-  describe("hooks/post-tool-use.sh", () => {
-    const scriptPath = join(import.meta.dirname, "..", "hooks", "post-tool-use.sh");
+  describe("src/hooks/post-tool-use.ts", () => {
+    const handlerPath = join(import.meta.dirname, "..", "src", "hooks", "post-tool-use.ts");
 
-    it("exists and is executable", async () => {
-      const { stat } = await import("node:fs/promises");
-      const stats = await stat(scriptPath);
-      expect(stats.mode & 0o100).toBeTruthy();
-    });
+    it("migrates PostToolUse policy out of bash", async () => {
+      const content = await readFile(handlerPath, "utf-8");
 
-    it("uses set -euo pipefail for safety", async () => {
-      const content = await readFile(scriptPath, "utf-8");
-      expect(content).toContain("set -euo pipefail");
-    });
-
-    it("exits cleanly when CLI is not built", async () => {
-      const content = await readFile(scriptPath, "utf-8");
-      expect(content).toContain('if [ ! -f "$CLI" ]');
-      expect(content).toContain("exit 0");
-    });
-
-    it("uses CLAUDE_SESSION_ID for the counter file", async () => {
-      const content = await readFile(scriptPath, "utf-8");
+      expect(content).toContain("postToolUseHandler");
       expect(content).toContain("CLAUDE_SESSION_ID");
-      expect(content).toContain("COUNTER_FILE");
-      expect(content).toContain("/tmp/headsdown-file-count-");
-    });
-
-    it("falls back to 'default' when CLAUDE_SESSION_ID is unset", async () => {
-      const content = await readFile(scriptPath, "utf-8");
-      expect(content).toContain("CLAUDE_SESSION_ID:-default");
-    });
-
-    it("increments counter and reports running count", async () => {
-      const content = await readFile(scriptPath, "utf-8");
-      expect(content).toContain("count=$((current + 1))");
-      expect(content).toContain("modified this session");
-    });
-
-    it("checks proposal estimatedFiles for scope comparison", async () => {
-      const content = await readFile(scriptPath, "utf-8");
-      expect(content).toContain("estimatedFiles");
-      expect(content).toContain("estimated_files");
-    });
-
-    it("warns when file count exceeds estimate by more than 50%", async () => {
-      const content = await readFile(scriptPath, "utf-8");
-      // 50% threshold: estimated * 3 / 2
-      expect(content).toContain("estimated_files * 3 / 2");
+      expect(content).toContain("headsdown-file-count-");
       expect(content).toContain("Scope warning");
       expect(content).toContain("headsdown_propose");
-    });
-
-    it("skips scope warning when no estimatedFiles in proposal", async () => {
-      const content = await readFile(scriptPath, "utf-8");
-      // Guard ensures we only compare when estimated_files > 0
-      expect(content).toContain('[ "$estimated_files" -gt 0 ]');
-    });
-
-    it("reports progress in fail-open mode", async () => {
-      const content = await readFile(scriptPath, "utf-8");
-      expect(content).toContain('node "$CLI" report-progress "$TOOL_TYPE" "$count"');
-      expect(content).toContain('progress_command_error="HeadsDown progress command failed."');
+      expect(content).toContain("report-progress");
       expect(content).toContain("HeadsDown progress command warning");
+      expect(content).toContain("attentionWindowClosing");
+      expect(content).toContain("additionalContext");
+      expect(content).toContain("/headsdown:extend");
+      expect(content).toContain("/headsdown:wrap");
+      expect(content).toContain(
+        "Do not autonomously call headsdown_apply_action with action_key pause_and_summarize",
+      );
+      expect(content).toContain("[HeadsDown]");
     });
 
     it("does not include deprecated intervention copy", async () => {
-      const content = await readFile(scriptPath, "utf-8");
+      const content = await readFile(handlerPath, "utf-8");
 
       expect(content).not.toContain("pause before this becomes cleanup work");
       expect(content).not.toContain("check headsdown_status to re-establish the target run");
@@ -1616,23 +1573,6 @@ describe("Plugin structure", () => {
       expect(content).toContain("activeRun");
       expect(content).toContain("overview");
       expect(content).toContain("wrapUpGuidance");
-    });
-
-    it("refreshes additionalContext during attention-window-closing", async () => {
-      const content = await readFile(scriptPath, "utf-8");
-
-      expect(content).toContain("attentionWindowClosing");
-      expect(content).toContain("additionalContext");
-      expect(content).toContain("/headsdown:extend");
-      expect(content).toContain("/headsdown:wrap");
-      expect(content).toContain(
-        "Do not autonomously call headsdown_apply_action with action_key pause_and_summarize",
-      );
-    });
-
-    it("uses [HeadsDown] prefix in system messages", async () => {
-      const content = await readFile(scriptPath, "utf-8");
-      expect(content).toContain("[HeadsDown]");
     });
   });
 

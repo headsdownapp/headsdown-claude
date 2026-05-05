@@ -7,8 +7,8 @@ var __require = /* @__PURE__ */ ((x) => typeof require !== "undefined" ? require
 });
 
 // src/cli.ts
-import { readFile as readFile9, writeFile as writeFile8, unlink as unlink3, access as access5 } from "node:fs/promises";
-import { join as join10, dirname as dirname6 } from "node:path";
+import { readFile as readFile10, writeFile as writeFile9, unlink as unlink3, access as access5 } from "node:fs/promises";
+import { join as join11, dirname as dirname6 } from "node:path";
 import { homedir as homedir9 } from "node:os";
 import { mkdirSync } from "node:fs";
 
@@ -4641,10 +4641,15 @@ function buildSdkEventInput(input) {
     sequence: input.sequence,
     idempotencyKey: input.idempotencyKey,
     correlationId: input.correlationId ?? input.runId,
-    proposalRef: input.proposalRef ?? input.runId,
+    proposalRef: proposalRefFor(input),
     payload: input.payload,
     progressPayload: input.progressPayload
   });
+}
+function proposalRefFor(input) {
+  if (input.proposalRef) return input.proposalRef;
+  if (input.eventType.startsWith("integration.")) return void 0;
+  return input.runId;
 }
 function isSuccessfulReportResult(result) {
   if (!result || typeof result !== "object") return true;
@@ -5998,10 +6003,598 @@ async function autopilotCli(action = process.argv[3]) {
   }
 }
 
+// src/hooks/index.ts
+import { spawn as spawn2 } from "node:child_process";
+
+// src/hooks/post-tool-use.ts
+import { tmpdir as tmpdir2 } from "node:os";
+import { join as join9 } from "node:path";
+
+// src/hooks/runtime.ts
+import { spawn } from "node:child_process";
+import { readFile as readFile8, writeFile as writeFile7 } from "node:fs/promises";
+async function readStdin5() {
+  const chunks = [];
+  for await (const chunk of process.stdin) {
+    chunks.push(chunk);
+  }
+  return Buffer.concat(chunks).toString("utf-8");
+}
+function parseJsonObject(input) {
+  try {
+    const parsed = JSON.parse(input || "{}");
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed : {};
+  } catch {
+    return {};
+  }
+}
+function defaultCliPath() {
+  const pluginRoot = process.env.CLAUDE_PLUGIN_ROOT;
+  if (!pluginRoot) return null;
+  return `${pluginRoot}/dist/cli.js`;
+}
+function createCliRunner(cliPath = defaultCliPath()) {
+  return async (args, input) => {
+    if (!cliPath) return { code: 1, stdout: "", stderr: "" };
+    return await new Promise((resolve, reject) => {
+      const child = spawn(process.execPath, [cliPath, ...args], {
+        stdio: [input === void 0 ? "ignore" : "pipe", "pipe", "pipe"],
+        env: process.env
+      });
+      let stdout = "";
+      let stderr = "";
+      child.stdout?.setEncoding("utf-8");
+      child.stderr?.setEncoding("utf-8");
+      child.stdout?.on("data", (chunk) => {
+        stdout += chunk;
+      });
+      child.stderr?.on("data", (chunk) => {
+        stderr += chunk;
+      });
+      child.on("error", reject);
+      child.on("close", (code) => resolve({ code, stdout: stdout.trim(), stderr: stderr.trim() }));
+      if (input !== void 0) child.stdin?.end(input);
+    });
+  };
+}
+async function runCliJson(runner, args, fallback) {
+  const result = await runner(args);
+  if (result.code !== 0 || !result.stdout) return fallback;
+  try {
+    return JSON.parse(result.stdout);
+  } catch {
+    return fallback;
+  }
+}
+function outputJson(payload) {
+  if (payload === void 0 || payload === null) return;
+  process.stdout.write(`${JSON.stringify(payload)}
+`);
+}
+function asRecord(value) {
+  return value && typeof value === "object" && !Array.isArray(value) ? value : null;
+}
+function stringField2(value) {
+  return typeof value === "string" && value !== "null" ? value : "";
+}
+function boolField(value) {
+  return value === true;
+}
+function arrayOfStrings(value) {
+  return Array.isArray(value) ? value.filter((item) => typeof item === "string") : [];
+}
+async function readCounter(path) {
+  try {
+    const value = (await readFile8(path, "utf-8")).trim();
+    return /^\d+$/.test(value) ? Number.parseInt(value, 10) : 0;
+  } catch {
+    return 0;
+  }
+}
+async function writeCounter(path, value) {
+  await writeFile7(path, String(value));
+}
+
+// src/hooks/post-tool-use.ts
+async function postToolUseHandler(input, runner) {
+  const hookInput = parseJsonObject(input);
+  const toolName = stringField2(hookInput.tool_name) || stringField2(hookInput.toolName);
+  const toolType = classifyTool(toolName);
+  const sessionId = process.env.CLAUDE_SESSION_ID || "default";
+  const counterFile = join9(tmpdir2(), `headsdown-file-count-${sessionId}`);
+  const current = await readCounter(counterFile);
+  const count = toolType === "write" ? current + 1 : current;
+  if (toolType === "write") await writeCounter(counterFile, count);
+  const proposal = asRecord(await runCliJson(runner, ["proposals"], null));
+  const estimatedFiles = integerField(proposal?.estimatedFiles) ?? 0;
+  const progress = await runProgress(runner, toolType, count);
+  let message = `[HeadsDown] ${count} file(s) modified this session.`;
+  let emitSystemMessage = toolType === "write";
+  const contexts = [];
+  if (estimatedFiles > 0 && count > Math.floor(estimatedFiles * 3 / 2)) {
+    message += ` Scope warning: approved proposal estimated ${estimatedFiles} file(s), ${count} have been modified. Consider calling headsdown_propose with updated estimates.`;
+  }
+  const progressRecord = asRecord(progress.payload);
+  if (progressRecord && boolField(progressRecord.attentionWindowClosing)) {
+    const attentionWindow = asRecord(progressRecord.attentionWindow);
+    const allowedActions = arrayOfStrings(progressRecord.allowedActionKeys);
+    const runId = stringField2(progressRecord.runId);
+    const source = stringField2(attentionWindow?.source);
+    const deadlineAt = stringField2(attentionWindow?.deadlineAt);
+    const thresholdMinutes = stringValue(attentionWindow?.thresholdMinutes);
+    const remainingMinutes = stringValue(attentionWindow?.remainingMinutes);
+    const hintsText = arrayOfStrings(attentionWindow?.hints).join("; ");
+    const wrapSupported = allowedActions.includes("pause_and_summarize");
+    const allowDurationSupported = allowedActions.includes("allow_for_duration");
+    if (source === "time_box" && !wrapSupported && !allowDurationSupported) {
+      const parts = [
+        "HeadsDown box warning: a self-declared local box deadline is active. Keep scope tight before the deadline; the box will not stop work automatically when it passes. Use /headsdown:timebox clear to clear it or /headsdown:timebox <duration> to replace it."
+      ];
+      appendLabeled(parts, "Deadline", deadlineAt);
+      appendLabeled(parts, "Remaining minutes", remainingMinutes);
+      appendLabeled(parts, "Warning threshold minutes", thresholdMinutes);
+      appendLabeled(parts, "Current box hints", hintsText);
+      contexts.push(parts.join(" "));
+      if (toolType === "write") {
+        message += " Box deadline is near. Use /headsdown:timebox clear to clear it or /headsdown:timebox <duration> to replace it.";
+      }
+    } else {
+      const parts = [
+        "HeadsDown call: Window closing. Do not autonomously call headsdown_apply_action with action_key pause_and_summarize for this call. The user must invoke /headsdown:wrap explicitly. You may call headsdown_apply_action with action_key allow_for_duration only if the user explicitly asks for an extension."
+      ];
+      if (runId) {
+        parts.push(`Target run_id: ${runId}.`);
+      } else {
+        parts.push(
+          "If run_id is missing, call headsdown_status to re-establish the target run before applying actions."
+        );
+      }
+      if (wrapSupported) parts.push("Wrap action is currently allowed.");
+      if (allowDurationSupported) parts.push("Extend action is currently allowed.");
+      if (source === "time_box") parts.push("Active box deadline is driving this warning.");
+      appendLabeled(parts, "Deadline", deadlineAt);
+      appendLabeled(parts, "Remaining minutes", remainingMinutes);
+      appendLabeled(parts, "Warning threshold minutes", thresholdMinutes);
+      appendLabeled(parts, "Current wrap-up hints", hintsText);
+      contexts.push(parts.join(" "));
+      if (toolType === "write") {
+        message += " Window closing is active. Use /headsdown:extend to request more time or /headsdown:wrap to pause and summarize.";
+      }
+    }
+  }
+  appendWarning(contexts, progressRecord, "timeBoxError", (value) => {
+    if (toolType === "write") {
+      message += " HeadsDown box state could not be read. Use /headsdown:timebox clear or /headsdown:timebox <duration> to replace it.";
+    }
+    return `HeadsDown box state warning: ${value}. Use /headsdown:timebox clear to clear local box state or /headsdown:timebox <duration> to replace it.`;
+  });
+  appendWarning(
+    contexts,
+    progressRecord,
+    "availabilityError",
+    (value) => `HeadsDown availability warning: ${value} Attention-window guidance may be incomplete until the next successful status check.`
+  );
+  appendWarning(
+    contexts,
+    progressRecord,
+    "progressReportError",
+    (value) => `HeadsDown progress telemetry warning: ${value} Attention-window guidance is still available, but progress telemetry may be stale.`
+  );
+  if (progress.error) {
+    contexts.push(
+      `HeadsDown progress command warning: ${progress.error} Attention-window guidance may be incomplete until the command succeeds.`
+    );
+  }
+  if (progressRecord && progressRecord.reported === false) {
+    let warning = `HeadsDown progress reporting warning: ${stringField2(progressRecord.message) || "progress reporting is unavailable."}`;
+    const details = stringField2(progressRecord.details);
+    if (details) warning += ` Details: ${details}.`;
+    contexts.push(warning);
+  }
+  const additionalContext = contexts.filter(Boolean).join(" ");
+  if (emitSystemMessage && additionalContext) {
+    return { systemMessage: message, hookSpecificOutput: { additionalContext } };
+  }
+  if (emitSystemMessage) return { systemMessage: message };
+  if (additionalContext) return { hookSpecificOutput: { additionalContext } };
+  return void 0;
+}
+function classifyTool(toolName) {
+  if (["Read", "Grep", "Glob", "LS"].includes(toolName)) return "read";
+  if (["Write", "Edit", "MultiEdit"].includes(toolName)) return "write";
+  return "external";
+}
+async function runProgress(runner, toolType, count) {
+  const result = await runner(["report-progress", toolType, String(count)]);
+  if (result.code !== 0) {
+    return {
+      payload: null,
+      error: ["HeadsDown progress command failed.", result.stderr].filter(Boolean).join(" ")
+    };
+  }
+  if (!result.stdout) return { payload: null, error: "" };
+  try {
+    return { payload: JSON.parse(result.stdout), error: "" };
+  } catch {
+    return { payload: null, error: "HeadsDown progress command returned invalid JSON." };
+  }
+}
+function appendLabeled(parts, label, value) {
+  if (value) parts.push(`${label}: ${value}.`);
+}
+function appendWarning(contexts, record, field, format) {
+  const value = stringField2(record?.[field]);
+  if (value) contexts.push(format(value));
+}
+function integerField(value) {
+  return typeof value === "number" && Number.isInteger(value) && value >= 0 ? value : null;
+}
+function stringValue(value) {
+  if (typeof value === "number" && Number.isFinite(value)) return String(value);
+  return stringField2(value);
+}
+
+// src/hooks/index.ts
+var SESSION_END_REASONS = /* @__PURE__ */ new Set([
+  "clear",
+  "resume",
+  "logout",
+  "prompt_input_exit",
+  "bypass_permissions_disabled",
+  "other"
+]);
+var SAFE_SESSION_ID_PATTERN = /^[A-Za-z0-9_.:-]{1,256}$/;
+async function hookCli(eventName = process.argv[3]) {
+  const input = await readStdin5();
+  const runner = createCliRunner();
+  const payload = await runHook(eventName, input, runner);
+  outputJson(payload);
+}
+async function runHook(eventName, input, runner) {
+  switch (eventName) {
+    case "session-start":
+      return await sessionStartHandler(runner);
+    case "user-prompt-submit":
+      return await passthroughJson(runner, ["autopilot", "prompt"]);
+    case "pre-tool-use-edit":
+      return await preToolUseEditHandler(input, runner);
+    case "pre-tool-use-ask":
+      return await passthroughJson(runner, ["autopilot", "intercept-ask"]);
+    case "post-tool-use":
+      return await postToolUseHandler(input, runner);
+    case "pre-compact":
+      return await preCompactHandler(runner);
+    case "stop-detect-deferral":
+      return await stopDetectDeferralHandler(runner);
+    case "stop-report":
+      await runner(["report"]);
+      return void 0;
+    case "session-end":
+      sessionEndHandler(input);
+      return void 0;
+    case "session-end-report":
+      await sessionEndReportHandler();
+      return void 0;
+    default:
+      process.exitCode = 1;
+      return void 0;
+  }
+}
+async function sessionStartHandler(runner) {
+  const queuedMarker = asRecord(await runCliJson(runner, ["action-marker", "active"], null));
+  const queuedRunId = stringField2(queuedMarker?.runId);
+  if (queuedRunId) {
+    const handoffState = stringField2(queuedMarker?.handoffState) || "unknown";
+    const attemptByAction = asRecord(queuedMarker?.attemptByAction);
+    const queuedAction = attemptByAction?.queue_for_morning ? "queue_for_morning" : stringField2(queuedMarker?.handoffKind) || "unknown";
+    const systemMessage = queuedAction === "queue_for_morning" ? `[HeadsDown] Off the clock. Save the handoff and ask tomorrow. Run ${queuedRunId} is queued (handoff: ${handoffState}). Do not continue or ask again until resume_run succeeds or the user explicitly allows continuation. Claude Code controls the model. HeadsDown controls the run.` : `[HeadsDown] Queued run ${queuedRunId} is waiting. Handoff state: ${handoffState}. Do not continue or ask again until HeadsDown returns resume_run or the user explicitly resumes the run.`;
+    return { systemMessage };
+  }
+  const statusResult = await runner(["status"]);
+  if (statusResult.code !== 0 || !statusResult.stdout) return void 0;
+  const status2 = asRecord(parseJsonObject(statusResult.stdout));
+  if (!status2) return void 0;
+  const contract = asRecord(status2.contract);
+  const availability = asRecord(status2.availability);
+  const renderedCall = asRecord(status2.renderedHeadsDownCall);
+  let context = stringField2(renderedCall?.text) ? `[HeadsDown] ${stringField2(renderedCall?.text).replace(/\s+/g, " ")} Supporting availability context:` : "[HeadsDown] Supporting availability context:";
+  const mode = stringField2(contract?.mode) || "unknown";
+  const statusText = stringField2(contract?.statusText);
+  if (mode === "unknown") {
+    context += " Axis 1 (availability mode): not set.";
+  } else {
+    context += ` Axis 1 (availability mode, user-set): ${mode}.`;
+    if (statusText) context += ` Status: ${statusText}.`;
+  }
+  if (availability) {
+    context += availability.inReachableHours === true ? " Currently in available hours." : " Currently outside available hours.";
+    const activeWindow = asRecord(availability.activeWindow);
+    const activeWindowLabel = stringField2(activeWindow?.label);
+    if (activeWindowLabel) context += ` Active window: ${activeWindowLabel}.`;
+    const wrapUpGuidance = asRecord(availability.wrapUpGuidance);
+    if (typeof wrapUpGuidance?.remainingMinutes === "number") {
+      context += ` Remaining attention budget: ${wrapUpGuidance.remainingMinutes} minutes.`;
+    }
+  }
+  const executionDirective = asRecord(status2.executionDirective);
+  const executionDirectiveCode = stringField2(executionDirective?.code);
+  const executionDirectiveSummary = stringField2(executionDirective?.summary);
+  if (executionDirectiveCode) {
+    context += ` Axis 2 (execution directive, schedule-derived): ${executionDirectiveCode}.`;
+    if (executionDirectiveSummary) context += ` ${executionDirectiveSummary}`;
+  }
+  const wrapUpInstruction = stringField2(status2.wrapUpInstruction);
+  if (wrapUpInstruction) context += ` Execution guidance: ${wrapUpInstruction}`;
+  const transition = asRecord(await runCliJson(runner, ["next-window"], null));
+  if (transition && typeof transition.minutesUntil === "number") {
+    const nextLabel = stringField2(transition.nextWindowLabel);
+    const nextMode = stringField2(transition.nextWindowMode);
+    context += nextLabel ? ` Transition in ${transition.minutesUntil} minutes: next window is '${nextLabel}' (${nextMode}).` : ` Availability window transition in ${transition.minutesUntil} minutes.`;
+    if (typeof transition.wrapUpThresholdMinutes === "number") {
+      context += ` Wrap-up threshold is ${transition.wrapUpThresholdMinutes} minutes before transition.`;
+    }
+  }
+  const digestResult = await runner(["digest-count"]);
+  const digestCount2 = Number.parseInt(digestResult.stdout || "0", 10) || 0;
+  if (digestCount2 === 1)
+    context += " You have 1 digest summary from your last focus session. Use headsdown_digest to review what you missed.";
+  if (digestCount2 > 1)
+    context += ` You have ${digestCount2} digest summaries from your last focus session. Use headsdown_digest to review what you missed.`;
+  const continuationResult = await runner(["continuation", "check"]);
+  if (continuationResult.code === 0) {
+    context += " [Continuation] A previous session left resumable work. Call headsdown_continuation with action 'load' for full details.";
+  }
+  const wakeUp = asRecord(await runCliJson(runner, ["autopilot", "wake-up"], null));
+  const wakeUpContext = stringField2(asRecord(wakeUp?.hookSpecificOutput)?.additionalContext);
+  const autopilotPrompt = asRecord(
+    await runCliJson(runner, ["autopilot", "prompt", "--as-session-context"], null)
+  );
+  const autopilotPromptContext = stringField2(
+    asRecord(autopilotPrompt?.hookSpecificOutput)?.additionalContext
+  );
+  const additionalContext = [wakeUpContext, autopilotPromptContext].filter(Boolean).join("\n\n");
+  if (additionalContext) {
+    return {
+      systemMessage: context,
+      hookSpecificOutput: { hookEventName: "SessionStart", additionalContext }
+    };
+  }
+  return { systemMessage: context };
+}
+async function preToolUseEditHandler(input, runner) {
+  const queuedMarker = asRecord(await runCliJson(runner, ["action-marker", "active"], null));
+  const queuedRunId = stringField2(queuedMarker?.runId);
+  if (queuedRunId) {
+    const handoffState = stringField2(queuedMarker?.handoffState) || "unknown";
+    return {
+      hookSpecificOutput: { permissionDecision: "deny" },
+      systemMessage: `[HeadsDown] Run ${queuedRunId} is queued. Handoff state: ${handoffState}. Do not continue, modify files, or ask again until HeadsDown returns resume_run or the user explicitly resumes the run.`
+    };
+  }
+  const hookInput = parseJsonObject(input);
+  const toolInput = asRecord(hookInput.tool_input) ?? asRecord(hookInput.toolInput);
+  const filePath = stringField2(toolInput?.file_path) || stringField2(toolInput?.path) || stringField2(toolInput?.filePath);
+  const config2 = asRecord(
+    await runCliJson(runner, ["config"], { trustLevel: "advisory", sensitivePaths: [] })
+  );
+  const sensitivePaths = Array.isArray(config2?.sensitivePaths) ? config2.sensitivePaths.filter((item) => typeof item === "string") : [];
+  const sensitiveMatch = filePath ? sensitivePaths.find((pattern) => globishMatch(filePath, pattern)) : void 0;
+  if (sensitiveMatch) {
+    return {
+      hookSpecificOutput: { permissionDecision: "ask" },
+      systemMessage: `[HeadsDown] Sensitive file detected: ${filePath} matches protected pattern '${sensitiveMatch}'. User confirmation required regardless of availability mode.`
+    };
+  }
+  const status2 = asRecord(await runCliJson(runner, ["status"], null));
+  if (!status2) return void 0;
+  const contract = asRecord(status2.contract);
+  const mode = stringField2(contract?.mode) || "none";
+  const statusText = stringField2(contract?.statusText);
+  const statusLabel = statusText ? ` (${statusText})` : "";
+  const lock = contract?.lock === true;
+  const trustLevel = stringField2(config2?.trustLevel) || "advisory";
+  const proposalCheck = trustLevel === "active" || trustLevel === "guarded" ? await runner(["proposals", "--check"]) : null;
+  const hasProposal = proposalCheck?.code === 0;
+  const proposal = hasProposal ? asRecord(await runCliJson(runner, ["proposals"], null)) : null;
+  const proposalDesc = stringField2(proposal?.description);
+  if (trustLevel === "advisory") {
+    if (mode === "offline") {
+      return {
+        hookSpecificOutput: { permissionDecision: "ask" },
+        systemMessage: `[HeadsDown] User is OFFLINE. Ask for explicit permission before making changes.`
+      };
+    }
+    if (mode === "busy" && lock) {
+      return {
+        hookSpecificOutput: { permissionDecision: "ask" },
+        systemMessage: `[HeadsDown] User is in BUSY mode${statusLabel} with status locked. Ask before making changes.`
+      };
+    }
+    if (mode === "busy")
+      return {
+        systemMessage: `[HeadsDown] User is in BUSY mode${statusLabel}. Consider submitting a task proposal via headsdown_propose before proceeding.`
+      };
+    if (mode === "limited")
+      return {
+        systemMessage: `[HeadsDown] User has LIMITED availability${statusLabel}. Keep changes small and focused.`
+      };
+  }
+  if (trustLevel === "active") {
+    if (mode === "online" || mode === "none") {
+      if (!hasProposal) return void 0;
+      return {
+        hookSpecificOutput: { permissionDecision: "allow" },
+        systemMessage: `[HeadsDown] Auto-approved: online mode with approved proposal (${proposalDesc}).`
+      };
+    }
+    if (mode === "busy" && lock) {
+      return {
+        hookSpecificOutput: { permissionDecision: "ask" },
+        systemMessage: `[HeadsDown] User is in BUSY mode${statusLabel} with status locked. Ask before proceeding.`
+      };
+    }
+    if (mode === "busy") {
+      return hasProposal ? {
+        hookSpecificOutput: { permissionDecision: "allow" },
+        systemMessage: `[HeadsDown] Auto-approved: proposal approved (${proposalDesc}). User is busy${statusLabel}.`
+      } : {
+        systemMessage: `[HeadsDown] User is BUSY${statusLabel}. Submit a task proposal via headsdown_propose before making changes.`
+      };
+    }
+    if (mode === "limited") {
+      return hasProposal ? {
+        hookSpecificOutput: { permissionDecision: "allow" },
+        systemMessage: `[HeadsDown] Auto-approved: proposal approved (${proposalDesc}). Keep changes focused.`
+      } : {
+        systemMessage: `[HeadsDown] User has LIMITED availability${statusLabel}. Submit a proposal or keep changes small.`
+      };
+    }
+    if (mode === "offline") {
+      return {
+        hookSpecificOutput: { permissionDecision: "ask" },
+        systemMessage: "[HeadsDown] User is OFFLINE. Ask for explicit permission even with an approved proposal."
+      };
+    }
+  }
+  if (trustLevel === "guarded") {
+    if (mode === "online" || mode === "none") return void 0;
+    if (mode === "busy" && lock) {
+      return {
+        hookSpecificOutput: { permissionDecision: "ask" },
+        systemMessage: `[HeadsDown] User is BUSY${statusLabel} with status locked. Explicit permission required.`
+      };
+    }
+    if (mode === "busy") {
+      return hasProposal ? {
+        hookSpecificOutput: { permissionDecision: "allow" },
+        systemMessage: `[HeadsDown] Approved: proposal verified (${proposalDesc}). Proceeding in busy mode.`
+      } : {
+        hookSpecificOutput: { permissionDecision: "ask" },
+        systemMessage: `[HeadsDown] User is BUSY${statusLabel}. No approved proposal found. Submit one via headsdown_propose or ask the user for permission.`
+      };
+    }
+    if (mode === "limited") {
+      return hasProposal ? {
+        hookSpecificOutput: { permissionDecision: "allow" },
+        systemMessage: `[HeadsDown] Approved: proposal verified (${proposalDesc}). Keep changes focused.`
+      } : {
+        hookSpecificOutput: { permissionDecision: "ask" },
+        systemMessage: `[HeadsDown] User has LIMITED availability${statusLabel}. No approved proposal. Ask before proceeding.`
+      };
+    }
+    if (mode === "offline") {
+      return {
+        hookSpecificOutput: { permissionDecision: "ask" },
+        systemMessage: "[HeadsDown] User is OFFLINE. All changes require explicit permission."
+      };
+    }
+  }
+  return void 0;
+}
+async function preCompactHandler(runner) {
+  const proposal = asRecord(await runCliJson(runner, ["proposals"], null));
+  const status2 = asRecord(await runCliJson(runner, ["status"], null));
+  const proposalDesc = stringField2(proposal?.description);
+  const estimatedFiles = proposal?.estimatedFiles === void 0 ? "" : String(proposal.estimatedFiles);
+  const wrapUpInstruction = stringField2(status2?.wrapUpInstruction);
+  if (!proposalDesc && !wrapUpInstruction) return void 0;
+  let context = "[HeadsDown] Before compaction:";
+  if (proposalDesc) {
+    context += ` You have an approved proposal: '${proposalDesc}'.`;
+    if (estimatedFiles && estimatedFiles !== "0") context += ` (estimated ${estimatedFiles} files)`;
+    context += " Include this in your compaction summary so you can resume the task after context is rebuilt.";
+  }
+  if (wrapUpInstruction) context += ` Execution policy: ${wrapUpInstruction}`;
+  return { systemMessage: context };
+}
+async function passthroughJson(runner, args) {
+  const result = await runner(args);
+  if (result.code !== 0 || !result.stdout) return void 0;
+  return parseJsonObject(result.stdout);
+}
+async function stopDetectDeferralHandler(runner) {
+  const result = await runner(["autopilot", "detect-deferral"]);
+  if (result.code === 2) {
+    if (result.stderr) process.stderr.write(result.stderr);
+    process.exitCode = 2;
+  }
+  if (result.stdout) return parseJsonObject(result.stdout);
+  return void 0;
+}
+function sessionEndHandler(input) {
+  try {
+    const hookInput = parseJsonObject(input);
+    const sessionId = safeSessionId(
+      stringField2(hookInput.session_id) || stringField2(hookInput.sessionId) || process.env.CLAUDE_SESSION_ID || "default"
+    );
+    const rawReason = stringField2(hookInput.reason) || "other";
+    const reason = SESSION_END_REASONS.has(rawReason) ? rawReason : "other";
+    const endedAt = (/* @__PURE__ */ new Date()).toISOString();
+    const cliPath = process.argv[1];
+    if (!cliPath) return;
+    const child = spawn2(process.execPath, [cliPath, "hook", "session-end-report"], {
+      detached: true,
+      stdio: "ignore",
+      env: {
+        ...process.env,
+        HEADSDOWN_SESSION_END_SESSION_ID: sessionId,
+        HEADSDOWN_SESSION_END_REASON: reason,
+        HEADSDOWN_SESSION_END_ENDED_AT: endedAt
+      }
+    });
+    child.unref();
+  } catch {
+  }
+}
+async function sessionEndReportHandler() {
+  const activeRun = await getActiveRunStateForSession().catch(() => null);
+  try {
+    const sessionId = safeSessionId(process.env.HEADSDOWN_SESSION_END_SESSION_ID || "default");
+    const rawReason = process.env.HEADSDOWN_SESSION_END_REASON || "other";
+    const reason = SESSION_END_REASONS.has(rawReason) ? rawReason : "other";
+    const endedAt = process.env.HEADSDOWN_SESSION_END_ENDED_AT || (/* @__PURE__ */ new Date()).toISOString();
+    const client = (await HeadsDownClient.fromCredentials()).withActor({
+      source: "claude-code",
+      agentId: "claude-code:session-end",
+      sessionId,
+      workspaceRef: "unknown"
+    });
+    const runId = activeRun?.runId ?? fallbackRunId(sessionId);
+    await reportAgentRunEventCompat(client, {
+      runId,
+      eventType: "integration.session_ended",
+      sequence: (activeRun?.sequence ?? 0) + 1,
+      idempotencyKey: `${runId}:integration.session_ended:${sessionId}`,
+      correlationId: activeRun?.proposalId ?? runId,
+      proposalRef: activeRun?.proposalId ?? void 0,
+      payload: {
+        session_id: sessionId,
+        outcome: reason === "logout" || reason === "clear" || reason === "resume" ? "succeeded" : "cancelled",
+        reason,
+        ended_at: endedAt
+      }
+    });
+  } catch {
+  } finally {
+    if (activeRun) await clearRunState(activeRun.runId).catch(() => void 0);
+  }
+}
+function safeSessionId(value) {
+  return SAFE_SESSION_ID_PATTERN.test(value) ? value : "default";
+}
+function fallbackRunId(sessionId) {
+  return `run_${sessionId}`.slice(0, 256);
+}
+function globishMatch(value, pattern) {
+  const doubleStar = "__HEADSDOWN_DOUBLE_STAR__";
+  const escaped = pattern.replace(/\*\*/g, doubleStar).replace(/[.+^${}()|[\]\\]/g, "\\$&").replace(/\*/g, "[^/]*").replaceAll(doubleStar, ".*");
+  return new RegExp(`(^|/)${escaped}$`).test(value);
+}
+
 // src/time-box-store.ts
-import { mkdir as mkdir7, readFile as readFile8, unlink as unlink2, writeFile as writeFile7 } from "node:fs/promises";
+import { mkdir as mkdir7, readFile as readFile9, unlink as unlink2, writeFile as writeFile8 } from "node:fs/promises";
 import { createHash as createHash2 } from "node:crypto";
-import { dirname as dirname5, join as join9 } from "node:path";
+import { dirname as dirname5, join as join10 } from "node:path";
 import { homedir as homedir8 } from "node:os";
 var LocalTimeBoxStore = class {
   constructor(filePath = defaultTimeBoxPath(), sessionIdHash = defaultSessionIdHash()) {
@@ -6020,12 +6613,12 @@ var LocalTimeBoxStore = class {
       throw new Error("Cannot save HeadsDown box for a different Claude session.");
     }
     await mkdir7(dirname5(this.filePath), { recursive: true });
-    await writeFile7(this.filePath, JSON.stringify(state, null, 2), { mode: 384 });
+    await writeFile8(this.filePath, JSON.stringify(state, null, 2), { mode: 384 });
   }
   async load() {
     let raw;
     try {
-      raw = await readFile8(this.filePath, "utf-8");
+      raw = await readFile9(this.filePath, "utf-8");
     } catch (error) {
       if (isNodeError(error) && error.code === "ENOENT") return null;
       throw new Error(`Could not read HeadsDown box at ${this.filePath}: ${errorMessage(error)}`);
@@ -6061,7 +6654,7 @@ function defaultSessionIdHash(env = process.env) {
 function defaultTimeBoxPath(env = process.env) {
   const override = clean2(env.HEADSDOWN_TIME_BOX_PATH);
   if (override) return override;
-  return join9(homedir8(), ".config", "headsdown", `time-box-${defaultSessionIdHash(env)}.json`);
+  return join10(homedir8(), ".config", "headsdown", `time-box-${defaultSessionIdHash(env)}.json`);
 }
 function hashSessionId(sessionId) {
   return createHash2("sha256").update(sessionId).digest("hex").slice(0, 16);
@@ -6437,6 +7030,8 @@ async function main() {
       return await timeBox();
     case "autopilot":
       return await autopilotCli();
+    case "hook":
+      return await hookCli();
     default:
       process.exit(1);
   }
@@ -6521,7 +7116,7 @@ async function proposals() {
     const metaPath = store.filePath.replace(/\.json$/, ".meta.json");
     let meta = {};
     try {
-      const metaRaw = await readFile9(metaPath, "utf-8");
+      const metaRaw = await readFile10(metaPath, "utf-8");
       meta = JSON.parse(metaRaw);
     } catch {
     }
@@ -6561,7 +7156,7 @@ async function digestCount() {
   const summaries = await actorClient.listDigestSummaries({ latest: 50 });
   console.log(String(summaries.length));
 }
-var CONTINUATION_PATH = join10(homedir9(), ".config", "headsdown", "continuation.json");
+var CONTINUATION_PATH = join11(homedir9(), ".config", "headsdown", "continuation.json");
 async function actionMarker() {
   const subcommand = process.argv[3];
   const store = new LocalActionMarkerStore();
@@ -6669,11 +7264,11 @@ async function continuation() {
       }
       JSON.parse(data);
       mkdirSync(dirname6(CONTINUATION_PATH), { recursive: true });
-      await writeFile8(CONTINUATION_PATH, data, { mode: 384 });
+      await writeFile9(CONTINUATION_PATH, data, { mode: 384 });
       break;
     }
     case "load": {
-      const raw = await readFile9(CONTINUATION_PATH, "utf-8");
+      const raw = await readFile10(CONTINUATION_PATH, "utf-8");
       console.log(raw);
       await unlink3(CONTINUATION_PATH);
       break;

@@ -7,7 +7,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "bash ${CLAUDE_PLUGIN_ROOT}/hooks/session-start.sh",
+            "command": "bash ${CLAUDE_PLUGIN_ROOT}/hooks/dispatch.sh session-start",
             "timeout": 10
           }
         ]
@@ -19,7 +19,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "bash -c 'if [ -z \"${CLAUDE_PLUGIN_ROOT:-}\" ]; then exit 0; fi; bash \"$CLAUDE_PLUGIN_ROOT/hooks/autopilot-prompt.sh\"'",
+            "command": "bash ${CLAUDE_PLUGIN_ROOT}/hooks/dispatch.sh user-prompt-submit",
             "timeout": 10
           }
         ]
@@ -31,7 +31,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "bash ${CLAUDE_PLUGIN_ROOT}/hooks/check-availability.sh",
+            "command": "bash ${CLAUDE_PLUGIN_ROOT}/hooks/dispatch.sh pre-tool-use-edit",
             "timeout": 10
           }
         ]
@@ -41,7 +41,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "bash -c 'test -n \"${CLAUDE_PLUGIN_ROOT:-}\" && bash \"$CLAUDE_PLUGIN_ROOT/hooks/autopilot-intercept-ask.sh\" || true'",
+            "command": "bash ${CLAUDE_PLUGIN_ROOT}/hooks/dispatch.sh pre-tool-use-ask",
             "timeout": 10
           }
         ]
@@ -53,7 +53,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "bash ${CLAUDE_PLUGIN_ROOT}/hooks/post-tool-use.sh",
+            "command": "bash ${CLAUDE_PLUGIN_ROOT}/hooks/dispatch.sh post-tool-use",
             "timeout": 10
           }
         ]
@@ -65,7 +65,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "bash ${CLAUDE_PLUGIN_ROOT}/hooks/pre-compact.sh",
+            "command": "bash ${CLAUDE_PLUGIN_ROOT}/hooks/dispatch.sh pre-compact",
             "timeout": 10
           }
         ]
@@ -77,12 +77,24 @@
         "hooks": [
           {
             "type": "command",
-            "command": "bash -c 'if [ -z \"${CLAUDE_PLUGIN_ROOT:-}\" ]; then exit 0; fi; bash \"$CLAUDE_PLUGIN_ROOT/hooks/autopilot-detect-deferral.sh\"; status=$?; if [ \"$status\" -eq 2 ]; then exit 2; fi; exit 0'",
+            "command": "bash -c 'if [ -z \"${CLAUDE_PLUGIN_ROOT:-}\" ]; then exit 0; fi; bash \"$CLAUDE_PLUGIN_ROOT/hooks/dispatch.sh\" stop-detect-deferral'",
             "timeout": 10
           },
           {
             "type": "command",
-            "command": "bash ${CLAUDE_PLUGIN_ROOT}/hooks/session-end.sh",
+            "command": "bash ${CLAUDE_PLUGIN_ROOT}/hooks/dispatch.sh stop-report",
+            "timeout": 10
+          }
+        ]
+      }
+    ],
+    "SessionEnd": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash ${CLAUDE_PLUGIN_ROOT}/hooks/dispatch.sh session-end",
             "timeout": 10
           }
         ]

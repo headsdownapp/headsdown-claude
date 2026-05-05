@@ -18,6 +18,12 @@ SESSION_ID="${CLAUDE_SESSION_ID:-default}"
 STATE_FILE="/tmp/headsdown-attention-window-monitor-${SESSION_ID}.state"
 POLL_SECONDS="${HEADSDOWN_ATTENTION_MONITOR_INTERVAL_SECONDS:-8}"
 
+cleanup() {
+  exit 0
+}
+
+trap cleanup TERM INT
+
 last_fingerprint=""
 if [ -f "$STATE_FILE" ]; then
   last_fingerprint=$(cat "$STATE_FILE" 2>/dev/null || echo "")
