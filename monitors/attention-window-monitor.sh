@@ -18,6 +18,12 @@ SESSION_ID="${CLAUDE_SESSION_ID:-default}"
 STATE_FILE="/tmp/headsdown-attention-window-monitor-${SESSION_ID}.state"
 POLL_SECONDS="${HEADSDOWN_ATTENTION_MONITOR_INTERVAL_SECONDS:-8}"
 
+cleanup() {
+  exit 0
+}
+
+trap cleanup TERM INT
+
 last_fingerprint=""
 if [ -f "$STATE_FILE" ]; then
   last_fingerprint=$(cat "$STATE_FILE" 2>/dev/null || echo "")
@@ -83,7 +89,11 @@ while true; do
   fi
 
   if [ "$should_warn" = "true" ]; then
-    fingerprint="${deadline_at}|${threshold_minutes}|${remaining_minutes}|${effective_source}"
+    # Fingerprint excludes remaining_minutes on purpose: it ticks down every
+    # poll, and including it would re-emit the warning every minute. We want
+    # one notice per (deadline, threshold, source) regime; if the user extends
+    # or replaces the time-box, deadline_at moves and the warning re-fires.
+    fingerprint="${deadline_at}|${threshold_minutes}|${effective_source}"
     if [ "$fingerprint" != "$last_fingerprint" ]; then
       if [ "$effective_source" = "time_box" ] && [ "$normalized_key" != "attention_window_closing" ]; then
         notice="[HeadsDown] Box deadline near. Keep scope tight; the box will not stop work automatically. Use /headsdown:timebox clear to clear it or /headsdown:timebox <duration> to replace it."

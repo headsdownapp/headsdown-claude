@@ -39,10 +39,16 @@ export function buildSdkEventInput(input: AgentRunEventInput): SdkAgentRunEventI
     sequence: input.sequence,
     idempotencyKey: input.idempotencyKey,
     correlationId: input.correlationId ?? input.runId,
-    proposalRef: input.proposalRef ?? input.runId,
+    proposalRef: proposalRefFor(input),
     payload: input.payload,
     progressPayload: input.progressPayload as AgentRunProgressMetadata | undefined,
   }) as SdkAgentRunEventInput;
+}
+
+function proposalRefFor(input: AgentRunEventInput): string | undefined {
+  if (input.proposalRef) return input.proposalRef;
+  if (input.eventType.startsWith("integration.")) return undefined;
+  return input.runId;
 }
 
 function isSuccessfulReportResult(result: unknown): boolean {
