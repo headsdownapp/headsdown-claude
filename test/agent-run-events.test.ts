@@ -276,8 +276,6 @@ describe("agent run event reporting", () => {
       payload: {
         session_id: "sess_1",
         outcome: "cancelled",
-        reason: "other",
-        ended_at: "2026-04-24T17:29:00Z",
       },
     });
 

@@ -2,6 +2,13 @@ import { spawn } from "node:child_process";
 import { HeadsDownClient } from "@headsdown/sdk";
 import { reportAgentRunEventCompat } from "../agent-run-reporter.js";
 import { clearRunState, getActiveRunStateForSession } from "../agent-run-state.js";
+import {
+  bashWriteTargetCandidates,
+  isWriteCapableHookTool,
+  permissionDeniedHandler,
+  postToolUseFailureHandler,
+  stopFailureHandler,
+} from "./integration-events.js";
 import { postToolUseHandler } from "./post-tool-use.js";
 import {
   asRecord,
@@ -43,6 +50,15 @@ export async function runHook(
       return await passthroughJson(runner, ["autopilot", "prompt"]);
     case "pre-tool-use-edit":
       return await preToolUseEditHandler(input, runner);
+    case "permission-denied":
+      await permissionDeniedHandler(input);
+      return undefined;
+    case "post-tool-use-failure":
+      await postToolUseFailureHandler(input);
+      return undefined;
+    case "stop-failure":
+      await stopFailureHandler(input);
+      return undefined;
     case "pre-tool-use-ask":
       return await passthroughJson(runner, ["autopilot", "intercept-ask"]);
     case "post-tool-use":
@@ -174,6 +190,9 @@ async function sessionStartHandler(runner: CliRunner): Promise<unknown> {
 }
 
 async function preToolUseEditHandler(input: string, runner: CliRunner): Promise<unknown> {
+  const hookInput = parseJsonObject(input);
+  if (!isWriteCapableHookTool(hookInput)) return undefined;
+
   const queuedMarker = asRecord(await runCliJson(runner, ["action-marker", "active"], null));
   const queuedRunId = stringField(queuedMarker?.runId);
   if (queuedRunId) {
@@ -184,25 +203,36 @@ async function preToolUseEditHandler(input: string, runner: CliRunner): Promise<
     };
   }
 
-  const hookInput = parseJsonObject(input);
   const toolInput = asRecord(hookInput.tool_input) ?? asRecord(hookInput.toolInput);
+  const toolName = stringField(hookInput.tool_name) || stringField(hookInput.toolName);
+  const command = stringField(toolInput?.command) || stringField(toolInput?.cmd);
   const filePath =
     stringField(toolInput?.file_path) ||
     stringField(toolInput?.path) ||
     stringField(toolInput?.filePath);
+  const fileTargets = [
+    filePath,
+    ...(toolName === "Bash" ? bashWriteTargetCandidates(command) : []),
+  ].filter(Boolean);
   const config = asRecord(
     await runCliJson(runner, ["config"], { trustLevel: "advisory", sensitivePaths: [] }),
   );
   const sensitivePaths = Array.isArray(config?.sensitivePaths)
     ? config.sensitivePaths.filter((item): item is string => typeof item === "string")
     : [];
-  const sensitiveMatch = filePath
-    ? sensitivePaths.find((pattern) => globishMatch(filePath, pattern))
-    : undefined;
+  const sensitiveMatch = findSensitiveTarget(fileTargets, sensitivePaths);
   if (sensitiveMatch) {
     return {
       hookSpecificOutput: { permissionDecision: "ask" },
-      systemMessage: `[HeadsDown] Sensitive file detected: ${filePath} matches protected pattern '${sensitiveMatch}'. User confirmation required regardless of availability mode.`,
+      systemMessage: `[HeadsDown] Sensitive file detected: ${sensitiveMatch.target} matches protected pattern '${sensitiveMatch.pattern}'. User confirmation required regardless of availability mode.`,
+    };
+  }
+
+  if (toolName === "Bash" && sensitivePaths.length > 0 && fileTargets.length === 0) {
+    return {
+      hookSpecificOutput: { permissionDecision: "ask" },
+      systemMessage:
+        "[HeadsDown] Bash write detected. User confirmation required because protected paths are configured and the write target could not be verified.",
     };
   }
 
@@ -397,10 +427,11 @@ function sessionEndHandler(input: string): void {
 }
 
 async function sessionEndReportHandler(): Promise<void> {
-  const activeRun = await getActiveRunStateForSession().catch(() => null);
+  let activeRun: Awaited<ReturnType<typeof getActiveRunStateForSession>> = null;
 
   try {
     const sessionId = safeSessionId(process.env.HEADSDOWN_SESSION_END_SESSION_ID || "default");
+    activeRun = await getActiveRunStateForSession(sessionId).catch(() => null);
     const rawReason = process.env.HEADSDOWN_SESSION_END_REASON || "other";
     const reason = SESSION_END_REASONS.has(rawReason) ? rawReason : "other";
     const endedAt = process.env.HEADSDOWN_SESSION_END_ENDED_AT || new Date().toISOString();
@@ -416,6 +447,7 @@ async function sessionEndReportHandler(): Promise<void> {
       eventType: "integration.session_ended",
       sequence: (activeRun?.sequence ?? 0) + 1,
       idempotencyKey: `${runId}:integration.session_ended:${sessionId}`,
+      occurredAt: endedAt,
       correlationId: activeRun?.proposalId ?? runId,
       proposalRef: activeRun?.proposalId ?? undefined,
       payload: {
@@ -424,8 +456,6 @@ async function sessionEndReportHandler(): Promise<void> {
           reason === "logout" || reason === "clear" || reason === "resume"
             ? "succeeded"
             : "cancelled",
-        reason,
-        ended_at: endedAt,
       },
     });
   } catch {
@@ -441,6 +471,17 @@ function safeSessionId(value: string): string {
 
 function fallbackRunId(sessionId: string): string {
   return `run_${sessionId}`.slice(0, 256);
+}
+
+function findSensitiveTarget(
+  targets: string[],
+  sensitivePaths: string[],
+): { target: string; pattern: string } | undefined {
+  for (const target of targets) {
+    const pattern = sensitivePaths.find((candidate) => globishMatch(target, candidate));
+    if (pattern) return { target, pattern };
+  }
+  return undefined;
 }
 
 function globishMatch(value: string, pattern: string): boolean {

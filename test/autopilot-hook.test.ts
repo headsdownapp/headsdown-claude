@@ -59,14 +59,26 @@ describe("autopilot hooks", () => {
     expect(promptHook.hooks[0].command).toContain("CLAUDE_PLUGIN_ROOT");
   });
 
-  it("registers the AskUserQuestion PreToolUse hook", async () => {
+  it("registers write enforcement and failure signal hooks", async () => {
     const hooks = JSON.parse(await readFile("hooks/hooks.json", "utf-8"));
+    const editHook = hooks.hooks.PreToolUse.find(
+      (entry: { matcher: string }) => entry.matcher === "Write|Edit|MultiEdit|NotebookEdit|Bash",
+    );
     const askHook = hooks.hooks.PreToolUse.find(
       (entry: { matcher: string }) => entry.matcher === "AskUserQuestion",
     );
 
+    expect(editHook.hooks[0].command).toContain("dispatch.sh pre-tool-use-edit");
+    expect(editHook.hooks[0].command).toContain("CLAUDE_PLUGIN_ROOT");
     expect(askHook.hooks[0].command).toContain("dispatch.sh pre-tool-use-ask");
     expect(askHook.hooks[0].command).toContain("CLAUDE_PLUGIN_ROOT");
+    expect(hooks.hooks.PermissionDenied[0].hooks[0].command).toContain(
+      "dispatch.sh permission-denied",
+    );
+    expect(hooks.hooks.PostToolUseFailure[0].hooks[0].command).toContain(
+      "dispatch.sh post-tool-use-failure",
+    );
+    expect(hooks.hooks.StopFailure[0].hooks[0].command).toContain("dispatch.sh stop-failure");
   });
 
   it("registered command exits zero when CLAUDE_PLUGIN_ROOT is missing", async () => {

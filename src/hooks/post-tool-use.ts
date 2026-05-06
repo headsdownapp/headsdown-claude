@@ -1,5 +1,6 @@
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { isBashWriteLikeCommand } from "./integration-events.js";
 import {
   arrayOfStrings,
   asRecord,
@@ -17,7 +18,7 @@ export type ToolType = "read" | "write" | "external";
 export async function postToolUseHandler(input: string, runner: CliRunner): Promise<unknown> {
   const hookInput = parseJsonObject(input);
   const toolName = stringField(hookInput.tool_name) || stringField(hookInput.toolName);
-  const toolType = classifyTool(toolName);
+  const toolType = classifyTool(toolName, hookInput);
   const sessionId = process.env.CLAUDE_SESSION_ID || "default";
   const counterFile = join(tmpdir(), `headsdown-file-count-${sessionId}`);
   const current = await readCounter(counterFile);
@@ -136,9 +137,14 @@ export async function postToolUseHandler(input: string, runner: CliRunner): Prom
   return undefined;
 }
 
-function classifyTool(toolName: string): ToolType {
+function classifyTool(toolName: string, hookInput: Record<string, unknown>): ToolType {
   if (["Read", "Grep", "Glob", "LS"].includes(toolName)) return "read";
-  if (["Write", "Edit", "MultiEdit"].includes(toolName)) return "write";
+  if (["Write", "Edit", "MultiEdit", "NotebookEdit"].includes(toolName)) return "write";
+  if (toolName === "Bash") {
+    const toolInput = asRecord(hookInput.tool_input) ?? asRecord(hookInput.toolInput);
+    const command = stringField(toolInput?.command) || stringField(toolInput?.cmd);
+    return isBashWriteLikeCommand(command) ? "write" : "external";
+  }
   return "external";
 }
 

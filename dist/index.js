@@ -3978,6 +3978,7 @@ function buildSdkEventInput(input) {
     privacyMode: "metadata_only",
     sequence: input.sequence,
     idempotencyKey: input.idempotencyKey,
+    occurredAt: input.occurredAt,
     correlationId: input.correlationId ?? input.runId,
     proposalRef: proposalRefFor(input),
     payload: input.payload,

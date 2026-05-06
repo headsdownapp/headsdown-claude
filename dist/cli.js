@@ -4640,6 +4640,7 @@ function buildSdkEventInput(input) {
     privacyMode: "metadata_only",
     sequence: input.sequence,
     idempotencyKey: input.idempotencyKey,
+    occurredAt: input.occurredAt,
     correlationId: input.correlationId ?? input.runId,
     proposalRef: proposalRefFor(input),
     payload: input.payload,
@@ -6006,9 +6007,8 @@ async function autopilotCli(action = process.argv[3]) {
 // src/hooks/index.ts
 import { spawn as spawn2 } from "node:child_process";
 
-// src/hooks/post-tool-use.ts
-import { tmpdir as tmpdir2 } from "node:os";
-import { join as join9 } from "node:path";
+// src/hooks/integration-events.ts
+import { createHash as createHash2 } from "node:crypto";
 
 // src/hooks/runtime.ts
 import { spawn } from "node:child_process";
@@ -6095,11 +6095,361 @@ async function writeCounter(path, value) {
   await writeFile7(path, String(value));
 }
 
+// src/hooks/integration-events.ts
+var SAFE_SESSION_ID_PATTERN = /^[A-Za-z0-9_.:-]{1,256}$/;
+var SAFE_ID_PATTERN = /^[A-Za-z0-9_.:-]{1,128}$/;
+var TURN_FAILED_REASONS = /* @__PURE__ */ new Set([
+  "api_error",
+  "timeout",
+  "cancelled",
+  "rate_limited",
+  "unknown"
+]);
+var TOOL_FAILED_REASONS = /* @__PURE__ */ new Set(["permission_denied", "execution_error", "timeout", "unknown"]);
+var PERMISSION_DENIED_RESOLUTIONS = /* @__PURE__ */ new Set(["user_denied", "auto_denied", "policy"]);
+var WRITE_COMMANDS = /* @__PURE__ */ new Set([
+  "tee",
+  "cp",
+  "mv",
+  "rm",
+  "rmdir",
+  "mkdir",
+  "touch",
+  "chmod",
+  "chown",
+  "ln",
+  "install",
+  "truncate",
+  "dd",
+  "patch"
+]);
+var GIT_WRITE_SUBCOMMANDS = /* @__PURE__ */ new Set([
+  "apply",
+  "checkout",
+  "restore",
+  "reset",
+  "clean",
+  "merge",
+  "rebase",
+  "commit",
+  "am",
+  "cherry-pick",
+  "pull",
+  "stash"
+]);
+var PACKAGE_WRITE_SUBCOMMANDS = /* @__PURE__ */ new Set([
+  "install",
+  "update",
+  "add",
+  "remove",
+  "upgrade",
+  "dedupe"
+]);
+async function permissionDeniedHandler(input, client) {
+  const hookInput = parseJsonObject(input);
+  const toolName = toolNameFromHook(hookInput);
+  const sessionId = sessionIdFromHook(hookInput);
+  const decisionId = opaqueId("decision", [
+    sessionId,
+    toolName,
+    stringField2(hookInput.tool_use_id) || stringField2(hookInput.toolUseId)
+  ]);
+  const resolution = enumValue(hookInput.resolution, PERMISSION_DENIED_RESOLUTIONS, "auto_denied");
+  await reportActiveIntegrationEvent(client, {
+    sessionId,
+    eventType: "integration.permission_denied",
+    idempotencySuffix: `permission_denied:${decisionId}`,
+    payload: {
+      decision_id: decisionId,
+      session_id: sessionId,
+      action_kind_bucket: actionKindBucket(toolName, hookInput),
+      resolution
+    }
+  });
+}
+async function stopFailureHandler(input, client) {
+  const hookInput = parseJsonObject(input);
+  const sessionId = sessionIdFromHook(hookInput);
+  const turnId = opaqueId("turn", [
+    sessionId,
+    stringField2(hookInput.turn_id) || stringField2(hookInput.turnId) || eventFingerprint(input)
+  ]);
+  const reason = reasonBucket(hookInput, TURN_FAILED_REASONS, "unknown");
+  await reportActiveIntegrationEvent(client, {
+    sessionId,
+    eventType: "integration.turn_failed",
+    idempotencySuffix: `turn_failed:${turnId}`,
+    payload: {
+      turn_id: turnId,
+      session_id: sessionId,
+      reason
+    }
+  });
+}
+async function postToolUseFailureHandler(input, client) {
+  const hookInput = parseJsonObject(input);
+  const sessionId = sessionIdFromHook(hookInput);
+  const toolName = toolNameFromHook(hookInput);
+  const toolId = opaqueId("tool", [
+    sessionId,
+    toolName,
+    stringField2(hookInput.tool_use_id) || stringField2(hookInput.toolUseId) || eventFingerprint(input)
+  ]);
+  const turnId = optionalOpaqueId("turn", [
+    sessionId,
+    stringField2(hookInput.turn_id) || stringField2(hookInput.turnId)
+  ]);
+  const reason = reasonBucket(hookInput, TOOL_FAILED_REASONS, "execution_error");
+  await reportActiveIntegrationEvent(client, {
+    sessionId,
+    eventType: "integration.tool_failed",
+    idempotencySuffix: `tool_failed:${toolId}`,
+    payload: {
+      tool_id: toolId,
+      session_id: sessionId,
+      ...turnId ? { turn_id: turnId } : {},
+      reason
+    }
+  });
+}
+function isBashWriteLikeCommand(command2) {
+  const normalized = command2.trim();
+  if (!normalized) return false;
+  if (hasUnquotedRedirection(normalized)) return true;
+  return shellCommandSegments(normalized).some((segment) => segmentIsWriteLike(segment));
+}
+function bashWriteTargetCandidates(command2) {
+  const targets = /* @__PURE__ */ new Set();
+  for (const target of redirectionTargets(command2)) targets.add(target);
+  for (const segment of shellCommandSegments(command2)) {
+    const tokens = tokenizeShellSegment(segment);
+    const commandIndex = commandTokenIndex(tokens);
+    if (commandIndex < 0) continue;
+    const commandName = tokens[commandIndex];
+    const args = tokens.slice(commandIndex + 1);
+    if (WRITE_COMMANDS.has(commandName)) {
+      for (const arg of args) {
+        if (!arg.startsWith("-")) targets.add(arg);
+      }
+    }
+  }
+  return [...targets].filter((target) => target && !target.startsWith("-"));
+}
+function isWriteCapableHookTool(hookInput) {
+  const toolName = toolNameFromHook(hookInput);
+  const toolInput = asRecord(hookInput.tool_input) ?? asRecord(hookInput.toolInput);
+  if (["Write", "Edit", "MultiEdit", "NotebookEdit"].includes(toolName)) return true;
+  if (toolName === "unknown" && hasFileTarget(toolInput)) return true;
+  if (toolName !== "Bash") return false;
+  const command2 = stringField2(toolInput?.command) || stringField2(toolInput?.cmd);
+  return isBashWriteLikeCommand(command2);
+}
+async function reportActiveIntegrationEvent(client, input) {
+  try {
+    const activeRun = await getActiveRunStateForSession(input.sessionId);
+    if (!activeRun) {
+      process.stderr.write("[HeadsDown] Integration failure signal skipped: no active run.\n");
+      return;
+    }
+    const stateForEvent = nextSequence(activeRun);
+    const reportingClient = client ?? await HeadsDownClient.fromCredentials();
+    const ok = await reportAgentRunEventCompat(reportingClient, {
+      runId: stateForEvent.runId,
+      eventType: input.eventType,
+      sequence: stateForEvent.sequence,
+      idempotencyKey: `${stateForEvent.runId}:${input.eventType}:${stateForEvent.sequence}:${input.idempotencySuffix}`,
+      correlationId: stateForEvent.proposalId,
+      proposalRef: stateForEvent.proposalId,
+      payload: input.payload
+    });
+    if (!ok) return;
+    await upsertRunState(activeRun.runId, (current) => {
+      const base = current ?? activeRun;
+      return {
+        ...base,
+        sequence: Math.max(base.sequence, stateForEvent.sequence),
+        failureCount: base.failureCount + failureIncrement(input.eventType)
+      };
+    });
+  } catch {
+    process.stderr.write(
+      "[HeadsDown] Integration failure signal skipped: reporting unavailable.\n"
+    );
+  }
+}
+function failureIncrement(eventType) {
+  return eventType === "integration.tool_failed" || eventType === "integration.turn_failed" ? 1 : 0;
+}
+function sessionIdFromHook(hookInput) {
+  const value = stringField2(hookInput.session_id) || stringField2(hookInput.sessionId) || process.env.CLAUDE_SESSION_ID || "default";
+  return SAFE_SESSION_ID_PATTERN.test(value) ? value : "default";
+}
+function toolNameFromHook(hookInput) {
+  return stringField2(hookInput.tool_name) || stringField2(hookInput.toolName) || "unknown";
+}
+function hasFileTarget(toolInput) {
+  return Boolean(
+    stringField2(toolInput?.file_path) || stringField2(toolInput?.path) || stringField2(toolInput?.filePath)
+  );
+}
+function actionKindBucket(toolName, hookInput) {
+  if (toolName === "Bash") {
+    const toolInput = asRecord(hookInput.tool_input) ?? asRecord(hookInput.toolInput);
+    const command2 = stringField2(toolInput?.command) || stringField2(toolInput?.cmd);
+    return isBashWriteLikeCommand(command2) ? "shell_destructive" : "shell_other";
+  }
+  if (["Write", "Edit", "MultiEdit", "NotebookEdit"].includes(toolName)) return "file_write";
+  return "tool_action";
+}
+function reasonBucket(hookInput, allowed, fallback) {
+  const candidates = [
+    stringField2(hookInput.reason),
+    stringField2(hookInput.error_type),
+    stringField2(hookInput.errorType),
+    stringField2(hookInput.failure_reason),
+    stringField2(hookInput.failureReason)
+  ].map((value) => value.toLowerCase());
+  for (const candidate of candidates) {
+    if (allowed.has(candidate)) return candidate;
+    if (/(^|\W)permission(\W|$)/.test(candidate))
+      return allowed.has("permission_denied") ? "permission_denied" : fallback;
+    if (/(^|\W)(timeout|timed_out)(\W|$)/.test(candidate)) return "timeout";
+    if (/(^|\W)rate[_ -]?limited(\W|$)/.test(candidate))
+      return allowed.has("rate_limited") ? "rate_limited" : fallback;
+    if (/(^|\W)cancelled?(\W|$)/.test(candidate))
+      return allowed.has("cancelled") ? "cancelled" : fallback;
+    if (/(^|\W)api[_ -]?error(\W|$)/.test(candidate))
+      return allowed.has("api_error") ? "api_error" : fallback;
+  }
+  return fallback;
+}
+function enumValue(value, allowed, fallback) {
+  const candidate = stringField2(value).toLowerCase();
+  return allowed.has(candidate) ? candidate : fallback;
+}
+function segmentIsWriteLike(segment) {
+  const tokens = tokenizeShellSegment(segment);
+  const index = commandTokenIndex(tokens);
+  if (index < 0) return false;
+  const commandName = tokens[index];
+  const args = tokens.slice(index + 1);
+  if (WRITE_COMMANDS.has(commandName)) return true;
+  if (commandName === "git") return GIT_WRITE_SUBCOMMANDS.has(args[0] ?? "");
+  if (["npm", "pnpm", "yarn"].includes(commandName)) {
+    if (PACKAGE_WRITE_SUBCOMMANDS.has(args[0] ?? "")) return true;
+    return args[0] === "run" && args[1] === "build";
+  }
+  if (commandName === "python" && args[0] === "-m" && args[1] === "pip") {
+    return args[2] === "install";
+  }
+  if (["sed", "perl", "ruby", "python", "node"].includes(commandName)) {
+    return args.includes("-i") || args.some((arg) => arg.startsWith("-i"));
+  }
+  return false;
+}
+function commandTokenIndex(tokens) {
+  let index = 0;
+  while (/^[A-Za-z_][A-Za-z0-9_]*=.*/.test(tokens[index] ?? "")) index += 1;
+  while (["sudo", "env", "command"].includes(tokens[index] ?? "")) index += 1;
+  return index < tokens.length ? index : -1;
+}
+function shellCommandSegments(command2) {
+  const segments = [];
+  let current = "";
+  let quote = "";
+  for (let index = 0; index < command2.length; index += 1) {
+    const char = command2[index];
+    const next = command2[index + 1];
+    if (quote) {
+      current += char;
+      if (char === quote) quote = "";
+      continue;
+    }
+    if (char === "'" || char === '"') {
+      quote = char;
+      current += char;
+      continue;
+    }
+    if (char === ";" || char === "\n" || char === "|" || char === "&") {
+      if (current.trim()) segments.push(current.trim());
+      current = "";
+      if ((char === "|" || char === "&") && next === char) index += 1;
+      continue;
+    }
+    current += char;
+  }
+  if (current.trim()) segments.push(current.trim());
+  return segments;
+}
+function tokenizeShellSegment(segment) {
+  const tokens = [];
+  let current = "";
+  let quote = "";
+  for (const char of segment) {
+    if (quote) {
+      if (char === quote) quote = "";
+      else current += char;
+      continue;
+    }
+    if (char === "'" || char === '"') {
+      quote = char;
+      continue;
+    }
+    if (/\s/.test(char)) {
+      if (current) tokens.push(current);
+      current = "";
+      continue;
+    }
+    current += char;
+  }
+  if (current) tokens.push(current);
+  return tokens;
+}
+function hasUnquotedRedirection(command2) {
+  return redirectionTargets(command2).length > 0;
+}
+function redirectionTargets(command2) {
+  const targets = [];
+  let quote = "";
+  for (let index = 0; index < command2.length; index += 1) {
+    const char = command2[index];
+    if (quote) {
+      if (char === quote) quote = "";
+      continue;
+    }
+    if (char === "'" || char === '"') {
+      quote = char;
+      continue;
+    }
+    if (char !== ">") continue;
+    const rest = command2.slice(command2[index + 1] === ">" ? index + 2 : index + 1).trimStart();
+    if (!rest || rest.startsWith("&") || rest.startsWith("|")) continue;
+    const [target] = tokenizeShellSegment(rest);
+    if (target) targets.push(target);
+  }
+  return targets;
+}
+function opaqueId(prefix, parts) {
+  const safePart = parts.find((part) => SAFE_ID_PATTERN.test(part));
+  if (safePart && safePart.startsWith(`${prefix}_`)) return safePart;
+  const digest = createHash2("sha256").update(parts.filter(Boolean).join("|")).digest("hex");
+  return `${prefix}_${digest.slice(0, 16)}`;
+}
+function optionalOpaqueId(prefix, parts) {
+  if (!parts.some(Boolean)) return void 0;
+  return opaqueId(prefix, parts);
+}
+function eventFingerprint(input) {
+  return createHash2("sha256").update(input).digest("hex").slice(0, 16);
+}
+
 // src/hooks/post-tool-use.ts
+import { tmpdir as tmpdir2 } from "node:os";
+import { join as join9 } from "node:path";
 async function postToolUseHandler(input, runner) {
   const hookInput = parseJsonObject(input);
   const toolName = stringField2(hookInput.tool_name) || stringField2(hookInput.toolName);
-  const toolType = classifyTool(toolName);
+  const toolType = classifyTool(toolName, hookInput);
   const sessionId = process.env.CLAUDE_SESSION_ID || "default";
   const counterFile = join9(tmpdir2(), `headsdown-file-count-${sessionId}`);
   const current = await readCounter(counterFile);
@@ -6199,9 +6549,14 @@ async function postToolUseHandler(input, runner) {
   if (additionalContext) return { hookSpecificOutput: { additionalContext } };
   return void 0;
 }
-function classifyTool(toolName) {
+function classifyTool(toolName, hookInput) {
   if (["Read", "Grep", "Glob", "LS"].includes(toolName)) return "read";
-  if (["Write", "Edit", "MultiEdit"].includes(toolName)) return "write";
+  if (["Write", "Edit", "MultiEdit", "NotebookEdit"].includes(toolName)) return "write";
+  if (toolName === "Bash") {
+    const toolInput = asRecord(hookInput.tool_input) ?? asRecord(hookInput.toolInput);
+    const command2 = stringField2(toolInput?.command) || stringField2(toolInput?.cmd);
+    return isBashWriteLikeCommand(command2) ? "write" : "external";
+  }
   return "external";
 }
 async function runProgress(runner, toolType, count) {
@@ -6243,7 +6598,7 @@ var SESSION_END_REASONS = /* @__PURE__ */ new Set([
   "bypass_permissions_disabled",
   "other"
 ]);
-var SAFE_SESSION_ID_PATTERN = /^[A-Za-z0-9_.:-]{1,256}$/;
+var SAFE_SESSION_ID_PATTERN2 = /^[A-Za-z0-9_.:-]{1,256}$/;
 async function hookCli(eventName = process.argv[3]) {
   const input = await readStdin5();
   const runner = createCliRunner();
@@ -6258,6 +6613,15 @@ async function runHook(eventName, input, runner) {
       return await passthroughJson(runner, ["autopilot", "prompt"]);
     case "pre-tool-use-edit":
       return await preToolUseEditHandler(input, runner);
+    case "permission-denied":
+      await permissionDeniedHandler(input);
+      return void 0;
+    case "post-tool-use-failure":
+      await postToolUseFailureHandler(input);
+      return void 0;
+    case "stop-failure":
+      await stopFailureHandler(input);
+      return void 0;
     case "pre-tool-use-ask":
       return await passthroughJson(runner, ["autopilot", "intercept-ask"]);
     case "post-tool-use":
@@ -6362,6 +6726,8 @@ async function sessionStartHandler(runner) {
   return { systemMessage: context };
 }
 async function preToolUseEditHandler(input, runner) {
+  const hookInput = parseJsonObject(input);
+  if (!isWriteCapableHookTool(hookInput)) return void 0;
   const queuedMarker = asRecord(await runCliJson(runner, ["action-marker", "active"], null));
   const queuedRunId = stringField2(queuedMarker?.runId);
   if (queuedRunId) {
@@ -6371,18 +6737,29 @@ async function preToolUseEditHandler(input, runner) {
       systemMessage: `[HeadsDown] Run ${queuedRunId} is queued. Handoff state: ${handoffState}. Do not continue, modify files, or ask again until HeadsDown returns resume_run or the user explicitly resumes the run.`
     };
   }
-  const hookInput = parseJsonObject(input);
   const toolInput = asRecord(hookInput.tool_input) ?? asRecord(hookInput.toolInput);
+  const toolName = stringField2(hookInput.tool_name) || stringField2(hookInput.toolName);
+  const command2 = stringField2(toolInput?.command) || stringField2(toolInput?.cmd);
   const filePath = stringField2(toolInput?.file_path) || stringField2(toolInput?.path) || stringField2(toolInput?.filePath);
+  const fileTargets = [
+    filePath,
+    ...toolName === "Bash" ? bashWriteTargetCandidates(command2) : []
+  ].filter(Boolean);
   const config2 = asRecord(
     await runCliJson(runner, ["config"], { trustLevel: "advisory", sensitivePaths: [] })
   );
   const sensitivePaths = Array.isArray(config2?.sensitivePaths) ? config2.sensitivePaths.filter((item) => typeof item === "string") : [];
-  const sensitiveMatch = filePath ? sensitivePaths.find((pattern) => globishMatch(filePath, pattern)) : void 0;
+  const sensitiveMatch = findSensitiveTarget(fileTargets, sensitivePaths);
   if (sensitiveMatch) {
     return {
       hookSpecificOutput: { permissionDecision: "ask" },
-      systemMessage: `[HeadsDown] Sensitive file detected: ${filePath} matches protected pattern '${sensitiveMatch}'. User confirmation required regardless of availability mode.`
+      systemMessage: `[HeadsDown] Sensitive file detected: ${sensitiveMatch.target} matches protected pattern '${sensitiveMatch.pattern}'. User confirmation required regardless of availability mode.`
+    };
+  }
+  if (toolName === "Bash" && sensitivePaths.length > 0 && fileTargets.length === 0) {
+    return {
+      hookSpecificOutput: { permissionDecision: "ask" },
+      systemMessage: "[HeadsDown] Bash write detected. User confirmation required because protected paths are configured and the write target could not be verified."
     };
   }
   const status2 = asRecord(await runCliJson(runner, ["status"], null));
@@ -6547,9 +6924,10 @@ function sessionEndHandler(input) {
   }
 }
 async function sessionEndReportHandler() {
-  const activeRun = await getActiveRunStateForSession().catch(() => null);
+  let activeRun = null;
   try {
     const sessionId = safeSessionId(process.env.HEADSDOWN_SESSION_END_SESSION_ID || "default");
+    activeRun = await getActiveRunStateForSession(sessionId).catch(() => null);
     const rawReason = process.env.HEADSDOWN_SESSION_END_REASON || "other";
     const reason = SESSION_END_REASONS.has(rawReason) ? rawReason : "other";
     const endedAt = process.env.HEADSDOWN_SESSION_END_ENDED_AT || (/* @__PURE__ */ new Date()).toISOString();
@@ -6565,13 +6943,12 @@ async function sessionEndReportHandler() {
       eventType: "integration.session_ended",
       sequence: (activeRun?.sequence ?? 0) + 1,
       idempotencyKey: `${runId}:integration.session_ended:${sessionId}`,
+      occurredAt: endedAt,
       correlationId: activeRun?.proposalId ?? runId,
       proposalRef: activeRun?.proposalId ?? void 0,
       payload: {
         session_id: sessionId,
-        outcome: reason === "logout" || reason === "clear" || reason === "resume" ? "succeeded" : "cancelled",
-        reason,
-        ended_at: endedAt
+        outcome: reason === "logout" || reason === "clear" || reason === "resume" ? "succeeded" : "cancelled"
       }
     });
   } catch {
@@ -6580,10 +6957,17 @@ async function sessionEndReportHandler() {
   }
 }
 function safeSessionId(value) {
-  return SAFE_SESSION_ID_PATTERN.test(value) ? value : "default";
+  return SAFE_SESSION_ID_PATTERN2.test(value) ? value : "default";
 }
 function fallbackRunId(sessionId) {
   return `run_${sessionId}`.slice(0, 256);
+}
+function findSensitiveTarget(targets, sensitivePaths) {
+  for (const target of targets) {
+    const pattern = sensitivePaths.find((candidate) => globishMatch(target, candidate));
+    if (pattern) return { target, pattern };
+  }
+  return void 0;
 }
 function globishMatch(value, pattern) {
   const doubleStar = "__HEADSDOWN_DOUBLE_STAR__";
@@ -6593,7 +6977,7 @@ function globishMatch(value, pattern) {
 
 // src/time-box-store.ts
 import { mkdir as mkdir7, readFile as readFile9, unlink as unlink2, writeFile as writeFile8 } from "node:fs/promises";
-import { createHash as createHash2 } from "node:crypto";
+import { createHash as createHash3 } from "node:crypto";
 import { dirname as dirname5, join as join10 } from "node:path";
 import { homedir as homedir8 } from "node:os";
 var LocalTimeBoxStore = class {
@@ -6657,7 +7041,7 @@ function defaultTimeBoxPath(env = process.env) {
   return join10(homedir8(), ".config", "headsdown", `time-box-${defaultSessionIdHash(env)}.json`);
 }
 function hashSessionId(sessionId) {
-  return createHash2("sha256").update(sessionId).digest("hex").slice(0, 16);
+  return createHash3("sha256").update(sessionId).digest("hex").slice(0, 16);
 }
 function validateStoredTimeBoxState(value) {
   if (!value || typeof value !== "object") return "state must be an object";

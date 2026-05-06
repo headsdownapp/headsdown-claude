@@ -13,6 +13,7 @@ export interface AgentRunEventInput {
   progressPayload?: Record<string, unknown>;
   correlationId?: string;
   proposalRef?: string;
+  occurredAt?: string;
 }
 
 export async function reportAgentRunEventCompat(
@@ -38,6 +39,7 @@ export function buildSdkEventInput(input: AgentRunEventInput): SdkAgentRunEventI
     privacyMode: "metadata_only",
     sequence: input.sequence,
     idempotencyKey: input.idempotencyKey,
+    occurredAt: input.occurredAt,
     correlationId: input.correlationId ?? input.runId,
     proposalRef: proposalRefFor(input),
     payload: input.payload,
