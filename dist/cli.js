@@ -6193,10 +6193,10 @@ async function postToolUseHandler(input, runner) {
   }
   const additionalContext = contexts.filter(Boolean).join(" ");
   if (emitSystemMessage && additionalContext) {
-    return { systemMessage: message, hookSpecificOutput: { additionalContext } };
+    return { systemMessage: message, hookSpecificOutput: { hookEventName: "PostToolUse", additionalContext } };
   }
   if (emitSystemMessage) return { systemMessage: message };
-  if (additionalContext) return { hookSpecificOutput: { additionalContext } };
+  if (additionalContext) return { hookSpecificOutput: { hookEventName: "PostToolUse", additionalContext } };
   return void 0;
 }
 function classifyTool(toolName) {

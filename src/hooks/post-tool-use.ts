@@ -129,10 +129,10 @@ export async function postToolUseHandler(input: string, runner: CliRunner): Prom
   const additionalContext = contexts.filter(Boolean).join(" ");
 
   if (emitSystemMessage && additionalContext) {
-    return { systemMessage: message, hookSpecificOutput: { additionalContext } };
+    return { systemMessage: message, hookSpecificOutput: { hookEventName: "PostToolUse", additionalContext } };
   }
   if (emitSystemMessage) return { systemMessage: message };
-  if (additionalContext) return { hookSpecificOutput: { additionalContext } };
+  if (additionalContext) return { hookSpecificOutput: { hookEventName: "PostToolUse", additionalContext } };
   return undefined;
 }
 
