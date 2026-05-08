@@ -223,11 +223,11 @@ After each tool call, the hook:
 - Increments a per-session file modification counter for write-like tools (keyed on `CLAUDE_SESSION_ID`)
 - Emits a system message for write operations noting the running count: "[HeadsDown] 4 file(s) modified this session."
 - If an approved proposal exists and actual edits exceed the estimated file count by more than 50%, warns Claude to re-evaluate scope and re-propose before continuing
-- Refreshes Claude-visible `additionalContext` while `attention_window_closing` is active so wrap-up hints stay current and action constraints remain explicit (`/headsdown:extend` is user-requested, `/headsdown:wrap` is user-elected)
+- Refreshes Claude-visible `additionalContext` while `attention_window_closing` is active so wrap-up hints stay current and action constraints remain explicit (`/headsdown:wrap` is user-elected, session timebox extension requests come from the session prompt)
 
 ### Attention Window Monitor
 
-A plugin monitor polls HeadsDown during active runs and emits a notification when a new `attention_window_closing` warning fingerprint appears (deadline + threshold). This enables mid-flow warning visibility even during long stretches between tool boundaries.
+A plugin monitor polls HeadsDown during active runs and emits a notification when a new `attention_window_closing` warning fingerprint appears (deadline + threshold). It also notices hosted session timeboxes that are inside the warning threshold and asks Claude to offer three choices: request 15 more minutes, request 30 more minutes, or wrap up. This enables mid-flow warning visibility even during long stretches between tool boundaries.
 
 ### PreCompact Hook
 
@@ -247,7 +247,7 @@ Quick slash commands for direct access:
 - `/headsdown:timebox <duration>` - Declare a session-scoped local deadline like `30m`, `45m`, `1h`, or `1h30m`
 - `/headsdown:timebox status` - Show the active box deadline, remaining time, and warning threshold
 - `/headsdown:timebox clear` - Clear the local box so future warnings use backend-derived attention-window behavior when available
-- `/headsdown:extend [minutes]` - Apply `allow_for_duration` to an active window-closing run (defaults to 15)
+- `/headsdown:extend [15|30]` - Request more time for an active hosted session timebox (defaults to 15)
 - `/headsdown:wrap` - Apply `pause_and_summarize` with a privacy-safe handoff for an active window-closing run
 - `/headsdown:wake-up` - Review metadata-only deferred decisions captured during autopilot
 

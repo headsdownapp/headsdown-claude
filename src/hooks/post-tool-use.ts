@@ -11,6 +11,10 @@ import {
   type CliRunner,
   writeCounter,
 } from "./runtime.js";
+import {
+  readSessionTimeboxPromptFingerprint,
+  writeSessionTimeboxPromptFingerprint,
+} from "../session-timebox.js";
 
 export type ToolType = "read" | "write" | "external";
 
@@ -47,9 +51,8 @@ export async function postToolUseHandler(input: string, runner: CliRunner): Prom
     const remainingMinutes = stringValue(attentionWindow?.remainingMinutes);
     const hintsText = arrayOfStrings(attentionWindow?.hints).join("; ");
     const wrapSupported = allowedActions.includes("pause_and_summarize");
-    const allowDurationSupported = allowedActions.includes("allow_for_duration");
 
-    if (source === "time_box" && !wrapSupported && !allowDurationSupported) {
+    if (source === "time_box" && !wrapSupported) {
       const parts = [
         "HeadsDown box warning: a self-declared local box deadline is active. Keep scope tight before the deadline; the box will not stop work automatically when it passes. Use /headsdown:timebox clear to clear it or /headsdown:timebox <duration> to replace it.",
       ];
@@ -64,7 +67,7 @@ export async function postToolUseHandler(input: string, runner: CliRunner): Prom
       }
     } else {
       const parts = [
-        "HeadsDown call: Window closing. Do not autonomously call headsdown_apply_action with action_key pause_and_summarize for this call. The user must invoke /headsdown:wrap explicitly. You may call headsdown_apply_action with action_key allow_for_duration only if the user explicitly asks for an extension.",
+        "HeadsDown call: Window closing. Do not autonomously call headsdown_apply_action with action_key pause_and_summarize for this call. The user must invoke /headsdown:wrap explicitly. Session timebox extension requests are handled only by the session timebox prompt.",
       ];
 
       if (runId) {
@@ -75,7 +78,6 @@ export async function postToolUseHandler(input: string, runner: CliRunner): Prom
         );
       }
       if (wrapSupported) parts.push("Wrap action is currently allowed.");
-      if (allowDurationSupported) parts.push("Extend action is currently allowed.");
       if (source === "time_box") parts.push("Active box deadline is driving this warning.");
       appendLabeled(parts, "Deadline", deadlineAt);
       appendLabeled(parts, "Remaining minutes", remainingMinutes);
@@ -85,8 +87,17 @@ export async function postToolUseHandler(input: string, runner: CliRunner): Prom
 
       if (toolType === "write") {
         message +=
-          " Window closing is active. Use /headsdown:extend to request more time or /headsdown:wrap to pause and summarize.";
+          " Window closing is active. Use /headsdown:wrap to pause and summarize if you want to stop here.";
       }
+    }
+  }
+
+  const sessionTimeboxContext = await buildSessionTimeboxPromptContext(progressRecord, sessionId);
+  if (sessionTimeboxContext) {
+    contexts.push(sessionTimeboxContext);
+    if (toolType === "write") {
+      message +=
+        " Session timebox is closing. Ask whether to request 15 minutes, request 30 minutes, or wrap up.";
     }
   }
 
@@ -129,10 +140,14 @@ export async function postToolUseHandler(input: string, runner: CliRunner): Prom
   const additionalContext = contexts.filter(Boolean).join(" ");
 
   if (emitSystemMessage && additionalContext) {
-    return { systemMessage: message, hookSpecificOutput: { hookEventName: "PostToolUse", additionalContext } };
+    return {
+      systemMessage: message,
+      hookSpecificOutput: { hookEventName: "PostToolUse", additionalContext },
+    };
   }
   if (emitSystemMessage) return { systemMessage: message };
-  if (additionalContext) return { hookSpecificOutput: { hookEventName: "PostToolUse", additionalContext } };
+  if (additionalContext)
+    return { hookSpecificOutput: { hookEventName: "PostToolUse", additionalContext } };
   return undefined;
 }
 
@@ -160,6 +175,35 @@ async function runProgress(
   } catch {
     return { payload: null, error: "HeadsDown progress command returned invalid JSON." };
   }
+}
+
+async function buildSessionTimeboxPromptContext(
+  progressRecord: Record<string, unknown> | null,
+  claudeSessionId: string,
+): Promise<string | null> {
+  const prompt = asRecord(progressRecord?.sessionTimeboxPrompt);
+  if (!prompt || !boolField(prompt.active)) return null;
+
+  const sessionId = stringField(prompt.sessionId);
+  const fingerprint = stringField(prompt.fingerprint);
+  if (!sessionId || !fingerprint) return null;
+
+  const previousFingerprint = await readSessionTimeboxPromptFingerprint(claudeSessionId);
+  if (previousFingerprint === fingerprint) return null;
+
+  await writeSessionTimeboxPromptFingerprint(claudeSessionId, fingerprint);
+  const remainingMinutes = stringValue(prompt.remainingMinutes);
+  const thresholdMinutes = stringValue(prompt.thresholdMinutes);
+  const parts = [
+    "HeadsDown session timebox is closing. Ask the user with AskUserQuestion and exactly these choices: Request 15 minutes, Request 30 minutes, Wrap up.",
+    `If the user chooses Request 15 minutes, call headsdown_session_timebox with action=request_extension, session_id=${sessionId}, requested_extension_minutes=15.`,
+    `If the user chooses Request 30 minutes, call headsdown_session_timebox with action=request_extension, session_id=${sessionId}, requested_extension_minutes=30.`,
+    "If the user chooses Wrap up or ignores the prompt, do not request an extension; wrap up cleanly when appropriate.",
+    "Do not include prompts, transcript text, file paths, repo names, logs, code, or free-form reasons in the extension request.",
+  ];
+  appendLabeled(parts, "Remaining minutes", remainingMinutes);
+  appendLabeled(parts, "Warning threshold minutes", thresholdMinutes);
+  return parts.join(" ");
 }
 
 function appendLabeled(parts: string[], label: string, value: string): void {

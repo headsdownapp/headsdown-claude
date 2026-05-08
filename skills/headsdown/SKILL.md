@@ -17,7 +17,7 @@ This plugin provides MCP tools. Use them via normal tool calls:
 - **headsdown_digest**: View notifications and messages that arrived during focus time
 - **headsdown_grants**: List/create/revoke delegation grants for actor-scoped permissions
 - **headsdown_override**: Get/set/clear temporary availability overrides
-- **headsdown_apply_action**: Apply canonical run-governance actions such as `pause_and_summarize` and `allow_for_duration`
+- **headsdown_apply_action**: Apply canonical run-governance actions such as `pause_and_summarize`. Session timebox extension requests use `headsdown_session_timebox`.
 - **headsdown_report**: Report task outcome for calibration (completed/failed/etc.)
 - **headsdown_continuation**: Save/load structured continuation artifacts for resumable work sessions
 - **headsdown_auth**: Authenticate with HeadsDown via Device Flow
@@ -128,7 +128,7 @@ Immediate behavior:
 1. Surface the warning and keep working with wrap-up hints in context.
 2. Do not autonomously call `headsdown_apply_action` with `action_key: "pause_and_summarize"` for this call.
 3. Wrap is user-elected only through `/headsdown:wrap`.
-4. Extend can be applied only when the user explicitly asks, using `/headsdown:extend` (or an explicit instruction) with `action_key: "allow_for_duration"`.
+4. Extend can be applied only when the user explicitly asks, using `/headsdown:extend` or the session timebox prompt. Request only 15 or 30 minutes through `headsdown_session_timebox`.
 5. If no action is taken, continue with tighter wrap-up hints as the deadline approaches. Window passing is informational and does not force a stop.
 
 ## Self-Declared Deadlines (Box)
@@ -143,7 +143,7 @@ Commands:
 - `/headsdown:timebox status` shows the active deadline, remaining minutes, and warning threshold.
 - `/headsdown:timebox clear` clears the local deadline so future warnings use backend-derived attention-window behavior when available.
 
-If a box expires, keep working with tighter hints until the user chooses `/headsdown:wrap`, asks for `/headsdown:extend`, clears the box, or gives different instructions. Do not auto-wrap or pause solely because the box deadline passed.
+If a box expires, keep working with tighter hints until the user chooses `/headsdown:wrap`, clears the box, or gives different instructions. Do not auto-wrap or pause solely because the box deadline passed.
 
 ## Interrupt Evaluation
 

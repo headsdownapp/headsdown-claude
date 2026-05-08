@@ -26,6 +26,11 @@ import {
 } from "./headsdown-action-executor.js";
 import { resolveCurrentRunContext } from "./report-progress-response.js";
 import { getLowLevelGraphQLClient } from "./sdk-compat.js";
+import {
+  clearSessionTimeboxPromptFingerprint,
+  requestSessionTimeboxExtensionCompat,
+  resolveSessionTimeboxPrompt,
+} from "./session-timebox.js";
 import type {
   ActorContext,
   AvailabilityOverride,
@@ -382,6 +387,32 @@ export function createServer(): Server {
         },
       },
       {
+        name: "headsdown_session_timebox",
+        description:
+          "Request more time for the current HeadsDown session timebox using only an opaque session id and requested minute count.",
+        inputSchema: {
+          type: "object" as const,
+          properties: {
+            action: {
+              type: "string",
+              enum: ["request_extension"],
+              description: "Action to run. Defaults to request_extension.",
+            },
+            session_id: {
+              type: "string",
+              description:
+                "Opaque session id from headsdown_status sessionTimeboxPrompt.sessionId.",
+            },
+            requested_extension_minutes: {
+              type: "number",
+              enum: [15, 30],
+              description: "Requested extension length in minutes.",
+            },
+          },
+          required: ["session_id", "requested_extension_minutes"],
+        },
+      },
+      {
         name: "headsdown_apply_action",
         description:
           "Apply a canonical HeadsDown action key for a specific run. This uses backend action semantics, " +
@@ -477,6 +508,8 @@ export function createServer(): Server {
           return await handleContinuation((args ?? {}) as Record<string, unknown>);
         case "headsdown_interrupt":
           return await handleInterrupt((args ?? {}) as Record<string, unknown>);
+        case "headsdown_session_timebox":
+          return await handleSessionTimebox((args ?? {}) as Record<string, unknown>);
         case "headsdown_apply_action":
           return await handleApplyAction((args ?? {}) as Record<string, unknown>);
         default:
@@ -512,6 +545,11 @@ async function handleStatus() {
     : null;
   const activeRun = await getActiveRunStateForSession();
   const currentRun = resolveCurrentRunContext({ activeRun, overview });
+  const sessionTimeboxPrompt = resolveSessionTimeboxPrompt({
+    sessionSummaries: overview?.sessionSummaries ?? null,
+    currentSessionId: process.env.CLAUDE_SESSION_ID,
+    thresholdMinutes: availability.wrapUpGuidance?.thresholdMinutes ?? null,
+  });
 
   return textResult(
     JSON.stringify(
@@ -534,6 +572,7 @@ async function handleStatus() {
         headsdownCall: overview?.headsdownCall ?? null,
         renderedHeadsDownCall,
         currentRun,
+        sessionTimeboxPrompt,
         summary: formatAvailabilitySummary(contract, availability, renderedHeadsDownCall?.title),
         wrapUpInstruction,
       },
@@ -1149,6 +1188,42 @@ async function handleInterrupt(args: Record<string, unknown>) {
       2,
     ),
   );
+}
+
+async function handleSessionTimebox(args: Record<string, unknown>) {
+  const action = typeof args.action === "string" ? args.action : "request_extension";
+  if (action !== "request_extension") {
+    return errorResult("Invalid action. Must be request_extension.");
+  }
+
+  const sessionId = typeof args.session_id === "string" ? args.session_id.trim() : "";
+  if (!sessionId) {
+    return errorResult("The 'session_id' parameter is required.");
+  }
+
+  const requestedExtensionMinutes =
+    typeof args.requested_extension_minutes === "number" ? args.requested_extension_minutes : NaN;
+  if (requestedExtensionMinutes !== 15 && requestedExtensionMinutes !== 30) {
+    return errorResult("The 'requested_extension_minutes' parameter must be 15 or 30.");
+  }
+
+  const client = await getClient();
+  if (!client) {
+    return errorResult("Not authenticated with HeadsDown. Run the headsdown_auth tool first.");
+  }
+
+  const actorClient = withActorContext(client, "headsdown_session_timebox");
+  try {
+    const result = await requestSessionTimeboxExtensionCompat(
+      actorClient,
+      sessionId,
+      requestedExtensionMinutes,
+    );
+    return textResult(JSON.stringify({ ok: true, ...result }, null, 2));
+  } catch (error) {
+    await clearSessionTimeboxPromptFingerprint(process.env.CLAUDE_SESSION_ID);
+    throw error;
+  }
 }
 
 async function handleApplyAction(args: Record<string, unknown>) {

@@ -99,7 +99,7 @@ describe("post-tool-use hook", () => {
     expect(payload.systemMessage).toContain("Window closing is active");
     expect(payload.hookSpecificOutput.additionalContext).toContain("Target run_id: run-write");
     expect(payload.hookSpecificOutput.additionalContext).toContain(
-      "Extend action is currently allowed",
+      "Session timebox extension requests are handled only by the session timebox prompt",
     );
   });
 
@@ -255,7 +255,7 @@ describe("post-tool-use hook", () => {
     expect(result.code).toBe(0);
     const payload = JSON.parse(result.stdout);
     expect(payload.systemMessage).toContain("Window closing is active");
-    expect(payload.systemMessage).toContain("/headsdown:extend");
+    expect(payload.systemMessage).not.toContain("/headsdown:extend");
     expect(payload.hookSpecificOutput.additionalContext).toContain("Target run_id: run-window");
     expect(payload.hookSpecificOutput.additionalContext).toContain(
       "Active box deadline is driving this warning",
@@ -305,6 +305,106 @@ describe("post-tool-use hook", () => {
     expect(payload.hookSpecificOutput.additionalContext).toContain("/headsdown:timebox clear");
     expect(payload.hookSpecificOutput.additionalContext).not.toContain("Target run_id");
   });
+
+  it("surfaces hosted session timebox choices once per threshold crossing", async () => {
+    await writeCliStub(`
+      const command = process.argv[2];
+      if (command === "proposals") {
+        console.log("null");
+      } else if (command === "report-progress") {
+        console.log(JSON.stringify({
+          reported: true,
+          runId: null,
+          attentionWindowClosing: false,
+          attentionWindow: null,
+          allowedActionKeys: [],
+          sessionTimeboxPrompt: {
+            active: true,
+            sessionId: "session-1",
+            timeboxExpiresAt: "2026-04-28T10:12:00.000Z",
+            remainingMinutes: 12,
+            thresholdMinutes: 15,
+            fingerprint: "session-1:2026-04-28T10:12:00.000Z:15",
+            choices: ["Request 15 minutes", "Request 30 minutes", "Wrap up"]
+          }
+        }));
+      } else {
+        console.log("null");
+      }
+    `);
+
+    const env = {
+      CLAUDE_PLUGIN_ROOT: pluginRoot,
+      CLAUDE_SESSION_ID: `hosted-session-timebox-context-${process.pid}-${Date.now()}`,
+    };
+    const first = await runScript("dist/cli.js", JSON.stringify({ tool_name: "Write" }), env, [
+      "hook",
+      "post-tool-use",
+    ]);
+    const second = await runScript("dist/cli.js", JSON.stringify({ tool_name: "Read" }), env, [
+      "hook",
+      "post-tool-use",
+    ]);
+
+    expect(first.code).toBe(0);
+    const firstPayload = JSON.parse(first.stdout);
+    expect(firstPayload.systemMessage).toContain("Session timebox is closing");
+    expect(firstPayload.hookSpecificOutput.additionalContext).toContain("AskUserQuestion");
+    expect(firstPayload.hookSpecificOutput.additionalContext).toContain("Request 15 minutes");
+    expect(firstPayload.hookSpecificOutput.additionalContext).toContain("Request 30 minutes");
+    expect(firstPayload.hookSpecificOutput.additionalContext).toContain("Wrap up");
+    expect(firstPayload.hookSpecificOutput.additionalContext).toContain(
+      "headsdown_session_timebox",
+    );
+    expect(firstPayload.hookSpecificOutput.additionalContext).toContain("session_id=session-1");
+    expect(firstPayload.hookSpecificOutput.additionalContext).not.toContain("README.md");
+
+    expect(second.code).toBe(0);
+    expect(second.stdout).toBe("");
+  });
+
+  it("keeps local box guidance unchanged when no hosted session prompt is active", async () => {
+    await writeCliStub(`
+      const command = process.argv[2];
+      if (command === "proposals") {
+        console.log("null");
+      } else if (command === "report-progress") {
+        console.log(JSON.stringify({
+          reported: true,
+          runId: "run-good",
+          attentionWindowClosing: true,
+          attentionWindow: {
+            deadlineAt: "2026-04-29T18:00:00Z",
+            thresholdMinutes: 15,
+            remainingMinutes: 6,
+            hints: ["box is active"],
+            source: "time_box"
+          },
+          sessionTimeboxPrompt: { active: false },
+          allowedActionKeys: ["narrow_scope"]
+        }));
+      } else {
+        console.log("null");
+      }
+    `);
+
+    const result = await runScript(
+      "dist/cli.js",
+      JSON.stringify({ tool_name: "Write" }),
+      {
+        CLAUDE_PLUGIN_ROOT: pluginRoot,
+        CLAUDE_SESSION_ID: "local-box-still-local-context",
+      },
+      ["hook", "post-tool-use"],
+    );
+
+    expect(result.code).toBe(0);
+    const payload = JSON.parse(result.stdout);
+    expect(payload.systemMessage).toContain("Box deadline is near");
+    expect(payload.systemMessage).not.toContain("Session timebox is closing");
+    expect(payload.hookSpecificOutput.additionalContext).toContain("HeadsDown box warning");
+    expect(payload.hookSpecificOutput.additionalContext).not.toContain("headsdown_session_timebox");
+  });
 });
 
 describe("SessionEnd hook dispatch", () => {
@@ -350,6 +450,34 @@ describe("attention-window monitor", () => {
     expect(result.stderr).not.toContain("Error:");
   });
 
+  it("emits one hosted session timebox prompt notice for repeated status", async () => {
+    await writeCliStub(`
+      if (process.argv[2] === "status") {
+        console.log(JSON.stringify({
+          attentionWindowClosing: false,
+          availability: { wrapUpGuidance: null },
+          sessionTimeboxPrompt: {
+            active: true,
+            sessionId: "session-1",
+            remainingMinutes: 12,
+            thresholdMinutes: 15,
+            fingerprint: "session-1:2026-04-28T10:12:00.000Z:15"
+          }
+        }));
+      }
+    `);
+
+    const result = await runMonitor(`session-timebox-monitor-${process.pid}-${Date.now()}`, 600);
+    const notices = result.stdout
+      .split("\n")
+      .filter((line) => line.includes("[HeadsDown] Session timebox closing"));
+
+    expect(notices).toHaveLength(1);
+    expect(notices[0]).toContain("request 15 more minutes");
+    expect(notices[0]).toContain("request 30 more minutes");
+    expect(notices[0]).toContain("wrap up");
+    expect(notices[0]).toContain("Remaining minutes: 12");
+  });
   it("emits one notice for repeated status with the same warning fingerprint", async () => {
     await writeCliStub(`
       if (process.argv[2] === "status") {
@@ -549,7 +677,7 @@ describe("attention-window monitor", () => {
       .filter((line) => line.includes("[HeadsDown] Window closing"));
 
     expect(notices).toHaveLength(1);
-    expect(notices[0]).toContain("/headsdown:extend");
+    expect(notices[0]).not.toContain("/headsdown:extend");
     expect(notices[0]).toContain("Active box deadline is driving this warning");
   });
 

@@ -1,4 +1,6 @@
 import type { AgentControlOverviewView, AgentRunSummaryView } from "./agent-control.js";
+import { resolveSessionTimeboxPrompt } from "./session-timebox.js";
+import type { SessionTimeboxPromptState } from "./session-timebox.js";
 import { resolveEffectiveAttentionWindow, isWithinWarningWindow } from "./time-box.js";
 import type { AttentionWindowInput, EffectiveAttentionWindow, TimeBoxState } from "./time-box.js";
 
@@ -25,6 +27,7 @@ export interface CurrentRunContext {
 interface ReportProgressGuidanceFields {
   attentionWindowClosing: boolean;
   attentionWindow: AttentionWindowState | null;
+  sessionTimeboxPrompt?: SessionTimeboxPromptState;
 }
 
 interface BaseReportProgressResponse extends ReportProgressGuidanceFields {
@@ -53,6 +56,7 @@ export function buildReportProgressResponse(input: {
   wrapUpGuidance?: AttentionWindowInput | null;
   timeBox?: TimeBoxState | null;
   now?: Date;
+  currentSessionId?: string | null;
 }): ReportProgressResponse {
   const currentRun = resolveCurrentRunContext({
     activeRun: input.activeRun,
@@ -63,6 +67,8 @@ export function buildReportProgressResponse(input: {
     wrapUpGuidance: input.wrapUpGuidance ?? null,
     timeBox: input.timeBox ?? null,
     now: input.now,
+    overview: input.overview,
+    currentSessionId: input.currentSessionId,
   });
 
   return {
@@ -83,6 +89,7 @@ export function buildReportProgressUnavailableResponse(input: {
   wrapUpGuidance?: AttentionWindowInput | null;
   timeBox?: TimeBoxState | null;
   now?: Date;
+  currentSessionId?: string | null;
 }): ReportProgressResponse {
   const currentRun = resolveCurrentRunContext({
     activeRun: input.activeRun ?? null,
@@ -93,6 +100,8 @@ export function buildReportProgressUnavailableResponse(input: {
     wrapUpGuidance: input.wrapUpGuidance ?? null,
     timeBox: input.timeBox ?? null,
     now: input.now,
+    overview: input.overview ?? null,
+    currentSessionId: input.currentSessionId,
   });
 
   return {
@@ -113,6 +122,8 @@ function buildReportProgressGuidance(input: {
   wrapUpGuidance: AttentionWindowInput | null;
   timeBox: TimeBoxState | null;
   now?: Date;
+  overview?: AgentControlOverviewView | null;
+  currentSessionId?: string | null;
 }): ReportProgressGuidanceFields {
   const backendClosing =
     input.callKey === "attention_window_closing" && !isFullDepthSuppressed(input.wrapUpGuidance);
@@ -126,14 +137,27 @@ function buildReportProgressGuidance(input: {
     !!effectiveAttentionWindow &&
     (backendClosing || isWithinWarningWindow(effectiveAttentionWindow));
 
+  const thresholdMinutes =
+    effectiveAttentionWindow?.thresholdMinutes ?? input.wrapUpGuidance?.thresholdMinutes ?? null;
+  const sessionTimeboxPrompt = resolveSessionTimeboxPrompt({
+    sessionSummaries: input.overview?.sessionSummaries ?? null,
+    currentSessionId: input.currentSessionId,
+    thresholdMinutes,
+    now: input.now,
+  });
+
+  const promptFields = sessionTimeboxPrompt.active ? { sessionTimeboxPrompt } : {};
+
   return attentionWindowClosing
     ? {
         attentionWindowClosing: true,
         attentionWindow: buildAttentionWindowState(effectiveAttentionWindow),
+        ...promptFields,
       }
     : {
         attentionWindowClosing: false,
         attentionWindow: null,
+        ...promptFields,
       };
 }
 

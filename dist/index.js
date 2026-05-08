@@ -10,8 +10,8 @@ var __require = /* @__PURE__ */ ((x) => typeof require !== "undefined" ? require
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 
 // src/server.ts
-import { writeFile as writeFile6, readFile as readFile6, unlink as unlink2, mkdir as mkdir6, access as access2 } from "node:fs/promises";
-import { join as join6, dirname as dirname4 } from "node:path";
+import { writeFile as writeFile7, readFile as readFile7, unlink as unlink2, mkdir as mkdir6, access as access2 } from "node:fs/promises";
+import { join as join7, dirname as dirname4 } from "node:path";
 import { homedir as homedir5 } from "node:os";
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { CallToolRequestSchema, ListToolsRequestSchema } from "@modelcontextprotocol/sdk/types.js";
@@ -191,6 +191,9 @@ var PROHIBITED_KEYS = /* @__PURE__ */ new Set([
   "prompt",
   "prompts",
   "model_response",
+  "model_responses",
+  "transcript",
+  "transcripts",
   "message",
   "messages",
   "content",
@@ -201,6 +204,7 @@ var PROHIBITED_KEYS = /* @__PURE__ */ new Set([
   "diff",
   "patch",
   "snippet",
+  "source",
   "file",
   "files",
   "file_contents",
@@ -209,10 +213,14 @@ var PROHIBITED_KEYS = /* @__PURE__ */ new Set([
   "path",
   "paths",
   "repo",
+  "repo_name",
   "repository",
   "repository_name",
+  "git_repo",
+  "git_repository",
   "branch",
   "branch_name",
+  "git_branch",
   "directory",
   "directory_name",
   "terminal_output",
@@ -325,7 +333,7 @@ function buildAgentRunEventInput(input) {
     payload,
     progressPayload: progressPayload2
   });
-  return privacySafeClone(variablesInput, "input");
+  return privacySafeClone(variablesInput, "input", ENVELOPE_TOP_LEVEL_EXEMPT_KEYS);
 }
 function startedEvent(context, payload) {
   return { ...context, eventType: "agent_run.started", payload };
@@ -368,6 +376,14 @@ function deferredDecisionResolvedEvent(context, payload) {
     payload
   };
 }
+function deferredDecisionReAttemptedEvent(context, payload) {
+  return {
+    ...context,
+    eventType: "deferred_decision.re_attempted",
+    idempotencyKey: `${context.runId}:deferred_decision.re_attempted:${payload.decision_id}`,
+    payload
+  };
+}
 function buildAgentRunEventIdempotencyKey(runId, eventType, sequence) {
   const suffix = sequence === void 0 ? Date.now().toString(36) : String(sequence);
   return `${safeToken(runId)}:${safeToken(eventType)}:${suffix}`;
@@ -386,9 +402,43 @@ function bucketFileCount(count) {
   return "over_10";
 }
 function assertPrivacySafe(value, path = "input") {
-  void privacySafeClone(value, path);
+  validatePrivacySafe(value, path);
 }
-function privacySafeClone(value, path) {
+function validatePrivacySafe(value, path, topLevelExemptKeys) {
+  if (value === null || value === void 0)
+    return;
+  if (Array.isArray(value)) {
+    assertPlainJsonArray(value, path);
+    for (let index = 0; index < value.length; index += 1) {
+      validatePrivacySafe(value[index], `${path}[${index}]`);
+    }
+    return;
+  }
+  if (typeof value === "object") {
+    if (!isPlainRecord(value)) {
+      throw new ValidationError("Agent run events can only include plain JSON-compatible metadata objects.", path);
+    }
+    for (const [key, entry] of plainRecordEntries(value, path)) {
+      const exempt = topLevelExemptKeys?.has(key) ?? false;
+      if (!exempt && isProhibitedPrivacyKey(key)) {
+        throw new ValidationError(`Agent run events cannot include raw-content field '${key}'.`, path);
+      }
+      validatePrivacySafe(entry, `${path}.${key}`);
+    }
+    return;
+  }
+  if (typeof value === "function" || typeof value === "symbol" || typeof value === "bigint") {
+    throw new ValidationError("Agent run events can only include JSON-compatible metadata values.", path);
+  }
+  if (typeof value === "number" && !Number.isFinite(value)) {
+    throw new ValidationError("Agent run events can only include finite numeric metadata values.", path);
+  }
+  if (typeof value === "string" && UNSAFE_VALUE_PATTERNS.some((pattern) => pattern.test(value))) {
+    throw new ValidationError("Agent run events cannot include paths, URLs, logs, secrets, or raw content.", path);
+  }
+}
+var ENVELOPE_TOP_LEVEL_EXEMPT_KEYS = /* @__PURE__ */ new Set(["source"]);
+function privacySafeClone(value, path, topLevelExemptKeys) {
   if (value === null || value === void 0)
     return value;
   if (Array.isArray(value)) {
@@ -406,7 +456,8 @@ function privacySafeClone(value, path) {
     }
     const clone = /* @__PURE__ */ Object.create(null);
     for (const [key, entry] of plainRecordEntries(value, path)) {
-      if (isProhibitedPrivacyKey(key)) {
+      const exempt = topLevelExemptKeys?.has(key) ?? false;
+      if (!exempt && isProhibitedPrivacyKey(key)) {
         throw new ValidationError(`Agent run events cannot include raw-content field '${key}'.`, path);
       }
       clone[key] = privacySafeClone(entry, `${path}.${key}`);
@@ -723,7 +774,6 @@ var GraphQLClient = class {
           signal: controller.signal
         });
       } catch (error) {
-        clearTimeout(timer);
         const networkError = error instanceof DOMException && error.name === "AbortError" ? new NetworkError(`Request timed out after ${this.timeout}ms`) : new NetworkError(`Failed to connect to HeadsDown API at ${this.baseUrl}: ${error?.message ?? String(error)}`, error instanceof Error ? error : void 0);
         if (attempt < this.retries) {
           const delayMs = this.retryDelayMs * Math.pow(2, attempt);
@@ -1500,6 +1550,21 @@ var PROFILE_QUERY = `
     }
   }
 `;
+var REQUEST_SESSION_TIMEBOX_EXTENSION_MUTATION = `
+  mutation RequestSessionTimeboxExtension($sessionId: String!, $requestedExtensionMinutes: Int!) {
+    requestSessionTimeboxExtension(
+      sessionId: $sessionId
+      requestedExtensionMinutes: $requestedExtensionMinutes
+    ) {
+      sessionId
+      pendingTimeboxExtensionRequest {
+        id
+        requestedExtensionMinutes
+        requestedAt
+      }
+    }
+  }
+`;
 var OVERRIDE_VERDICT_MUTATION = `
   mutation OverrideVerdict($input: OverrideInput!) {
     overrideVerdict(input: $input) {
@@ -1925,6 +1990,23 @@ var HeadsDownClient = class _HeadsDownClient {
   async getAgentControlOverview() {
     const data = await this.graphql.request(AGENT_CONTROL_OVERVIEW_QUERY);
     return data.agentControlOverview;
+  }
+  /**
+   * Request a user-approved extension for a session timebox.
+   * This does not extend the session directly; it creates a metadata-only HeadsDown approval request.
+   */
+  async requestSessionTimeboxExtension(input) {
+    validateSessionTimeboxExtensionRequest(input);
+    const data = await this.graphql.request(REQUEST_SESSION_TIMEBOX_EXTENSION_MUTATION, {
+      sessionId: input.sessionId.trim(),
+      requestedExtensionMinutes: input.requestedExtensionMinutes
+    });
+    const session = data.requestSessionTimeboxExtension;
+    const request = session?.pendingTimeboxExtensionRequest;
+    if (!session || !request) {
+      throw new ApiError("HeadsDown API returned no requestSessionTimeboxExtension data.");
+    }
+    return { sessionId: session.sessionId, request };
   }
   /**
    * Get a privacy-safe intervention replay by task proposal/action target id.
@@ -2468,6 +2550,9 @@ var HeadsDownClient = class _HeadsDownClient {
   async reportDeferredDecisionResolved(context, payload) {
     return this.reportAgentRunEvent(deferredDecisionResolvedEvent(context, payload));
   }
+  async reportDeferredDecisionReAttempted(context, payload) {
+    return this.reportAgentRunEvent(deferredDecisionReAttemptedEvent(context, payload));
+  }
   async reportSteeringOutcome(context, payload) {
     return this.reportAgentRunEvent(steeringOutcomeReportedEvent(context, payload));
   }
@@ -2603,6 +2688,9 @@ var WRAP_UP_FIELDS = /* @__PURE__ */ new Set([
   "delivery_mode",
   "wrapUpGuidance"
 ]);
+var SAFE_SESSION_TOKEN_PATTERN = /^[A-Za-z0-9_.:-]{1,255}$/;
+var TIMEBOX_EXTENSION_REQUEST_FIELDS = /* @__PURE__ */ new Set(["sessionId", "requestedExtensionMinutes"]);
+var MAX_REQUESTED_EXTENSION_MINUTES = 480;
 var AVAILABILITY_FIELDS = /* @__PURE__ */ new Set([
   "status",
   "statusEmoji",
@@ -2611,6 +2699,25 @@ var AVAILABILITY_FIELDS = /* @__PURE__ */ new Set([
   "autoRespond",
   "lock"
 ]);
+function validateSessionTimeboxExtensionRequest(input) {
+  if (!input || typeof input !== "object" || Array.isArray(input)) {
+    throw new ValidationError("Session timebox extension request input is required.", "input");
+  }
+  for (const key of Object.keys(input)) {
+    if (!TIMEBOX_EXTENSION_REQUEST_FIELDS.has(key)) {
+      throw new ValidationError("Session timebox extension requests only accept sessionId and requestedExtensionMinutes.", key);
+    }
+  }
+  if (!isSafeSessionToken(input.sessionId)) {
+    throw new ValidationError("sessionId must be a privacy-safe opaque token.", "sessionId");
+  }
+  if (!Number.isInteger(input.requestedExtensionMinutes) || input.requestedExtensionMinutes <= 0 || input.requestedExtensionMinutes > MAX_REQUESTED_EXTENSION_MINUTES) {
+    throw new ValidationError(`requestedExtensionMinutes must be an integer between 1 and ${MAX_REQUESTED_EXTENSION_MINUTES}.`, "requestedExtensionMinutes");
+  }
+}
+function isSafeSessionToken(value) {
+  return typeof value === "string" && value.trim() === value && SAFE_SESSION_TOKEN_PATTERN.test(value) && !value.includes("/") && !value.includes("\\") && !value.includes("://") && !value.includes(".git");
+}
 function validateAvailabilityOverrideInput(input) {
   if (!input || typeof input !== "object") {
     throw new ValidationError("Availability override input is required.", "input");
@@ -3200,6 +3307,69 @@ function describeExecutionDirective(input) {
   };
 }
 
+// node_modules/@headsdown/sdk/dist/referee/labels.js
+var LOCAL_REFEREE_CHECK_LABELS = {
+  validation_status: "Validation completed",
+  max_files_touched: "Scope within contract",
+  max_tool_calls: "Scope within contract",
+  require_tests: "Validation completed",
+  network_required: "Network requirement satisfied",
+  outcome: "Definition of done satisfied",
+  git_commit_present: "Commit present"
+};
+
+// node_modules/@headsdown/sdk/dist/referee/receipt.js
+var RECEIPT_CHECK_TYPES = new Set(Object.keys(LOCAL_REFEREE_CHECK_LABELS));
+
+// node_modules/@headsdown/sdk/dist/referee/outcome-payload.js
+var PROHIBITED_KEYS2 = /* @__PURE__ */ new Set([
+  "prompt",
+  "prompts",
+  "source_code",
+  "code",
+  "diff",
+  "patch",
+  "file",
+  "files",
+  "file_path",
+  "path",
+  "repo",
+  "repository",
+  "branch",
+  "terminal",
+  "stdout",
+  "stderr",
+  "output",
+  "log",
+  "logs",
+  "issue_body",
+  "pr_body",
+  "ticket_body",
+  "url",
+  "message",
+  "content",
+  "contents",
+  "hash",
+  "secret",
+  "secrets",
+  "token",
+  "tokens",
+  "access_token",
+  "access_tokens",
+  "refresh_token",
+  "refresh_tokens",
+  "api_key",
+  "api_keys",
+  "password",
+  "cookie",
+  "environment",
+  "environment_variable",
+  "environment_variables",
+  "env_var",
+  "env_vars"
+]);
+var PROHIBITED_COMPACT_KEYS2 = new Set(Array.from(PROHIBITED_KEYS2, (key) => key.replace(/_/g, "")));
+
 // node_modules/@headsdown/sdk/dist/types.js
 var HEADSDOWN_CALL_KEYS = [
   "good_to_run",
@@ -3361,6 +3531,127 @@ function resolveHeadsDownCallFallback(call) {
 // node_modules/@headsdown/sdk/dist/local-session-summary.js
 var SAFE_TOKEN_PATTERN = "^[A-Za-z0-9_.:-]{1,256}$";
 var SAFE_TOKEN_REGEX = new RegExp(SAFE_TOKEN_PATTERN);
+
+// node_modules/@headsdown/sdk/dist/integration-event.js
+var VARIANT_SPECS = {
+  session_started: {
+    wire_type: "integration.session_started",
+    required: ["session_id"],
+    optional: ["capabilities"],
+    enums: {}
+  },
+  session_ended: {
+    wire_type: "integration.session_ended",
+    required: ["session_id", "outcome"],
+    optional: ["duration_seconds", "turn_count", "reason", "ended_at"],
+    enums: {
+      outcome: ["succeeded", "failed", "cancelled", "timed_out"],
+      reason: [
+        "clear",
+        "resume",
+        "logout",
+        "prompt_input_exit",
+        "bypass_permissions_disabled",
+        "other"
+      ]
+    }
+  },
+  turn_started: {
+    wire_type: "integration.turn_started",
+    required: ["turn_id", "session_id"],
+    optional: ["sequence"],
+    enums: {}
+  },
+  turn_ended: {
+    wire_type: "integration.turn_ended",
+    required: ["turn_id", "session_id", "tool_calls_count"],
+    optional: ["duration_seconds"],
+    enums: {}
+  },
+  turn_failed: {
+    wire_type: "integration.turn_failed",
+    required: ["turn_id", "session_id", "reason"],
+    optional: ["duration_seconds"],
+    enums: {
+      reason: ["api_error", "timeout", "cancelled", "rate_limited", "unknown"]
+    }
+  },
+  tool_invoked: {
+    wire_type: "integration.tool_invoked",
+    required: ["tool_id", "session_id", "tool_kind"],
+    optional: ["turn_id", "tool_name_bucket"],
+    enums: {
+      tool_kind: ["read", "write", "external"]
+    }
+  },
+  tool_succeeded: {
+    wire_type: "integration.tool_succeeded",
+    required: ["tool_id", "session_id"],
+    optional: ["turn_id", "duration_ms_bucket"],
+    enums: {
+      duration_ms_bucket: ["under_100ms", "100ms_to_1s", "1s_to_10s", "over_10s", "unknown"]
+    }
+  },
+  tool_failed: {
+    wire_type: "integration.tool_failed",
+    required: ["tool_id", "session_id", "reason"],
+    optional: ["turn_id"],
+    enums: {
+      reason: ["permission_denied", "execution_error", "timeout", "unknown"]
+    }
+  },
+  permission_denied: {
+    wire_type: "integration.permission_denied",
+    required: ["decision_id", "session_id", "action_kind_bucket", "resolution"],
+    optional: [],
+    enums: {
+      resolution: ["user_denied", "auto_denied", "policy"]
+    }
+  },
+  context_compacted: {
+    wire_type: "integration.context_compacted",
+    required: ["session_id", "post_context_bucket"],
+    optional: ["turn_id", "prior_context_bucket"],
+    enums: {
+      prior_context_bucket: [
+        "under_10k",
+        "10k_to_50k",
+        "50k_to_100k",
+        "100k_to_200k",
+        "over_200k",
+        "unknown"
+      ],
+      post_context_bucket: [
+        "under_10k",
+        "10k_to_50k",
+        "50k_to_100k",
+        "100k_to_200k",
+        "over_200k",
+        "unknown"
+      ]
+    }
+  }
+};
+var INTEGRATION_EVENT_TYPE = {
+  session_started: VARIANT_SPECS.session_started.wire_type,
+  session_ended: VARIANT_SPECS.session_ended.wire_type,
+  turn_started: VARIANT_SPECS.turn_started.wire_type,
+  turn_ended: VARIANT_SPECS.turn_ended.wire_type,
+  turn_failed: VARIANT_SPECS.turn_failed.wire_type,
+  tool_invoked: VARIANT_SPECS.tool_invoked.wire_type,
+  tool_succeeded: VARIANT_SPECS.tool_succeeded.wire_type,
+  tool_failed: VARIANT_SPECS.tool_failed.wire_type,
+  permission_denied: VARIANT_SPECS.permission_denied.wire_type,
+  context_compacted: VARIANT_SPECS.context_compacted.wire_type
+};
+var SESSION_OUTCOMES = new Set(VARIANT_SPECS.session_ended.enums.outcome);
+var SESSION_ENDED_REASONS = new Set(VARIANT_SPECS.session_ended.enums.reason);
+var TURN_FAILED_REASONS = new Set(VARIANT_SPECS.turn_failed.enums.reason);
+var TOOL_KINDS = new Set(VARIANT_SPECS.tool_invoked.enums.tool_kind);
+var TOOL_DURATION_BUCKETS = new Set(VARIANT_SPECS.tool_succeeded.enums.duration_ms_bucket);
+var TOOL_FAILED_REASONS = new Set(VARIANT_SPECS.tool_failed.enums.reason);
+var PERMISSION_DENIED_RESOLUTIONS = new Set(VARIANT_SPECS.permission_denied.enums.resolution);
+var CONTEXT_SIZE_BUCKETS = new Set(VARIANT_SPECS.context_compacted.enums.post_context_bucket);
 
 // node_modules/@headsdown/sdk/dist/agent-rendering.js
 var AGENT_UNKNOWN_CALL_SAFE_ACTIONS = [
@@ -3583,6 +3874,15 @@ var AGENT_CONTROL_OVERVIEW_QUERY2 = `
         callKey
         allowedActionKeys
       }
+      sessionSummaries {
+        sessionId
+        timeboxExpiresAt
+        pendingTimeboxExtensionRequest {
+          id
+          requestedExtensionMinutes
+          requestedAt
+        }
+      }
     }
   }
 `;
@@ -3607,17 +3907,24 @@ function renderHeadsDownCall(call) {
   };
 }
 async function getAgentControlOverviewCompat(client) {
-  try {
-    if (typeof client.getAgentControlOverview === "function") {
-      const overview = await client.getAgentControlOverview();
-      return overview;
+  let nativeOverview = null;
+  if (typeof client.getAgentControlOverview === "function") {
+    try {
+      nativeOverview = await client.getAgentControlOverview();
+      if (nativeOverview.sessionSummaries && nativeOverview.sessionSummaries.length > 0) {
+        return nativeOverview;
+      }
+    } catch {
+      nativeOverview = null;
     }
-    const graphql = getLowLevelGraphQLClient(client);
-    if (!graphql) return null;
+  }
+  const graphql = getLowLevelGraphQLClient(client);
+  if (!graphql) return nativeOverview;
+  try {
     const data = await graphql.request(AGENT_CONTROL_OVERVIEW_QUERY2);
-    return data.agentControlOverview ?? null;
+    return data.agentControlOverview ?? nativeOverview;
   } catch {
-    return null;
+    return nativeOverview;
   }
 }
 function toSdkHeadsDownCall(call) {
@@ -3865,7 +4172,7 @@ function currentSessionId() {
 }
 
 // src/agent-run-progress.ts
-function bucketMinutes(minutes) {
+function bucketMinutes2(minutes) {
   if (minutes === null || minutes === void 0 || minutes < 0) return "unknown";
   if (minutes < 15) return "under_15";
   if (minutes <= 30) return "15_to_30";
@@ -3892,7 +4199,7 @@ function startedPayload(input) {
     task_size_bucket: typeof input.estimatedMinutes === "number" && input.estimatedMinutes > 60 ? "medium" : "small",
     started_by: "agent",
     initial_call_key: "good_to_run",
-    estimated_minutes_bucket: bucketMinutes(input.estimatedMinutes),
+    estimated_minutes_bucket: bucketMinutes2(input.estimatedMinutes),
     estimated_files_bucket: bucketFileCount(input.estimatedFiles ?? void 0),
     delivery_mode: "auto"
   };
@@ -4610,6 +4917,109 @@ var APPLY_HEADSDOWN_ACTION_MUTATION2 = `
   }
 `;
 
+// src/session-timebox.ts
+import { readFile as readFile6, rm, writeFile as writeFile6 } from "node:fs/promises";
+import { tmpdir as tmpdir2 } from "node:os";
+import { join as join6 } from "node:path";
+var DEFAULT_SESSION_TIMEBOX_THRESHOLD_MINUTES = 15;
+var SESSION_TIMEBOX_CHOICES = [
+  "Request 15 minutes",
+  "Request 30 minutes",
+  "Wrap up"
+];
+var REQUEST_SESSION_TIMEBOX_EXTENSION_MUTATION2 = `
+  mutation RequestSessionTimeboxExtension($input: SessionTimeboxExtensionRequestInput!) {
+    requestSessionTimeboxExtension(input: $input) {
+      sessionId
+      request {
+        id
+        requestedExtensionMinutes
+        requestedAt
+      }
+    }
+  }
+`;
+function sessionTimeboxPromptDedupePath(sessionId) {
+  const normalized = (sessionId ?? "default").replace(/[^a-zA-Z0-9._-]/g, "_");
+  return join6(tmpdir2(), `headsdown-session-timebox-prompt-${normalized}.state`);
+}
+async function clearSessionTimeboxPromptFingerprint(sessionId) {
+  await rm(sessionTimeboxPromptDedupePath(sessionId), { force: true });
+}
+function emptySessionTimeboxPromptState(thresholdMinutes = DEFAULT_SESSION_TIMEBOX_THRESHOLD_MINUTES) {
+  return {
+    active: false,
+    sessionId: null,
+    timeboxExpiresAt: null,
+    remainingMinutes: null,
+    thresholdMinutes,
+    fingerprint: null,
+    choices: SESSION_TIMEBOX_CHOICES
+  };
+}
+function resolveSessionTimeboxPrompt(input) {
+  const thresholdMinutes = normalizePositiveInteger(input.thresholdMinutes) ?? DEFAULT_SESSION_TIMEBOX_THRESHOLD_MINUTES;
+  const currentSessionId2 = cleanOpaqueId(input.currentSessionId);
+  if (!currentSessionId2) return emptySessionTimeboxPromptState(thresholdMinutes);
+  const summary = (input.sessionSummaries ?? []).find(
+    (item) => cleanOpaqueId(item.sessionId) === currentSessionId2
+  );
+  const sessionId = cleanOpaqueId(summary?.sessionId);
+  const timeboxExpiresAt = cleanIsoTimestamp(summary?.timeboxExpiresAt);
+  if (!sessionId || !timeboxExpiresAt || summary?.pendingTimeboxExtensionRequest) {
+    return emptySessionTimeboxPromptState(thresholdMinutes);
+  }
+  const now = input.now ?? /* @__PURE__ */ new Date();
+  const remainingMinutes = minutesUntil(timeboxExpiresAt, now);
+  if (remainingMinutes <= 0 || remainingMinutes > thresholdMinutes) {
+    return emptySessionTimeboxPromptState(thresholdMinutes);
+  }
+  return {
+    active: true,
+    sessionId,
+    timeboxExpiresAt,
+    remainingMinutes,
+    thresholdMinutes,
+    fingerprint: `${sessionId}:${timeboxExpiresAt}:${thresholdMinutes}`,
+    choices: SESSION_TIMEBOX_CHOICES
+  };
+}
+async function requestSessionTimeboxExtensionCompat(client, sessionId, requestedExtensionMinutes) {
+  const nativeMethod = client.requestSessionTimeboxExtension;
+  if (typeof nativeMethod === "function") {
+    return nativeMethod.call(client, { sessionId, requestedExtensionMinutes });
+  }
+  const graphql = getLowLevelGraphQLClient(client);
+  if (!graphql) {
+    throw new Error("Session timebox extension requests require @headsdown/sdk 0.11.0 or newer.");
+  }
+  const response = await graphql.request(REQUEST_SESSION_TIMEBOX_EXTENSION_MUTATION2, {
+    input: { sessionId, requestedExtensionMinutes }
+  });
+  const result = response.requestSessionTimeboxExtension;
+  if (!result) throw new Error("HeadsDown API returned no session timebox extension request.");
+  return result;
+}
+function minutesUntil(value, now) {
+  const timestamp = Date.parse(value);
+  if (Number.isNaN(timestamp)) return 0;
+  return Math.max(0, Math.ceil((timestamp - now.getTime()) / 6e4));
+}
+function cleanIsoTimestamp(value) {
+  if (typeof value !== "string") return null;
+  const trimmed = value.trim();
+  if (!trimmed) return null;
+  return Number.isNaN(Date.parse(trimmed)) ? null : trimmed;
+}
+function cleanOpaqueId(value) {
+  if (typeof value !== "string") return null;
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : null;
+}
+function normalizePositiveInteger(value) {
+  return typeof value === "number" && Number.isInteger(value) && value > 0 ? value : null;
+}
+
 // src/report-progress-response.ts
 function resolveCurrentRunContext(input) {
   const currentRun = resolveCurrentRun(input.activeRun, input.overview?.runSummaries ?? null);
@@ -4950,6 +5360,30 @@ function createServer() {
         }
       },
       {
+        name: "headsdown_session_timebox",
+        description: "Request more time for the current HeadsDown session timebox using only an opaque session id and requested minute count.",
+        inputSchema: {
+          type: "object",
+          properties: {
+            action: {
+              type: "string",
+              enum: ["request_extension"],
+              description: "Action to run. Defaults to request_extension."
+            },
+            session_id: {
+              type: "string",
+              description: "Opaque session id from headsdown_status sessionTimeboxPrompt.sessionId."
+            },
+            requested_extension_minutes: {
+              type: "number",
+              enum: [15, 30],
+              description: "Requested extension length in minutes."
+            }
+          },
+          required: ["session_id", "requested_extension_minutes"]
+        }
+      },
+      {
         name: "headsdown_apply_action",
         description: "Apply a canonical HeadsDown action key for a specific run. This uses backend action semantics, validates against current allowedActionKeys when available, and returns structured errors for unsupported, not-allowed, and missing-input cases.",
         inputSchema: {
@@ -5034,6 +5468,8 @@ function createServer() {
           return await handleContinuation(args ?? {});
         case "headsdown_interrupt":
           return await handleInterrupt(args ?? {});
+        case "headsdown_session_timebox":
+          return await handleSessionTimebox(args ?? {});
         case "headsdown_apply_action":
           return await handleApplyAction(args ?? {});
         default:
@@ -5060,6 +5496,11 @@ async function handleStatus() {
   const renderedHeadsDownCall = overview?.headsdownCall ? renderHeadsDownCall(overview.headsdownCall) : null;
   const activeRun = await getActiveRunStateForSession();
   const currentRun = resolveCurrentRunContext({ activeRun, overview });
+  const sessionTimeboxPrompt = resolveSessionTimeboxPrompt({
+    sessionSummaries: overview?.sessionSummaries ?? null,
+    currentSessionId: process.env.CLAUDE_SESSION_ID,
+    thresholdMinutes: availability.wrapUpGuidance?.thresholdMinutes ?? null
+  });
   return textResult(
     JSON.stringify(
       {
@@ -5079,6 +5520,7 @@ async function handleStatus() {
         headsdownCall: overview?.headsdownCall ?? null,
         renderedHeadsDownCall,
         currentRun,
+        sessionTimeboxPrompt,
         summary: formatAvailabilitySummary(contract, availability, renderedHeadsDownCall?.title),
         wrapUpInstruction
       },
@@ -5117,7 +5559,7 @@ async function handlePropose(args) {
     });
     try {
       const metaPath = proposalState.filePath.replace(/\.json$/, ".meta.json");
-      await writeFile6(
+      await writeFile7(
         metaPath,
         JSON.stringify({ estimatedFiles: input.estimatedFiles ?? null }, null, 2),
         { mode: 384 }
@@ -5490,7 +5932,7 @@ function isSessionTokenOnlyGrantError(message) {
 function continuationPath() {
   const override = process.env.HEADSDOWN_CONTINUATION_PATH?.trim();
   if (override) return override;
-  return join6(homedir5(), ".config", "headsdown", "continuation.json");
+  return join7(homedir5(), ".config", "headsdown", "continuation.json");
 }
 async function handleContinuation(args) {
   const action = typeof args.action === "string" ? args.action : "";
@@ -5557,6 +5999,36 @@ async function handleInterrupt(args) {
       2
     )
   );
+}
+async function handleSessionTimebox(args) {
+  const action = typeof args.action === "string" ? args.action : "request_extension";
+  if (action !== "request_extension") {
+    return errorResult("Invalid action. Must be request_extension.");
+  }
+  const sessionId = typeof args.session_id === "string" ? args.session_id.trim() : "";
+  if (!sessionId) {
+    return errorResult("The 'session_id' parameter is required.");
+  }
+  const requestedExtensionMinutes = typeof args.requested_extension_minutes === "number" ? args.requested_extension_minutes : NaN;
+  if (requestedExtensionMinutes !== 15 && requestedExtensionMinutes !== 30) {
+    return errorResult("The 'requested_extension_minutes' parameter must be 15 or 30.");
+  }
+  const client = await getClient();
+  if (!client) {
+    return errorResult("Not authenticated with HeadsDown. Run the headsdown_auth tool first.");
+  }
+  const actorClient = withActorContext(client, "headsdown_session_timebox");
+  try {
+    const result = await requestSessionTimeboxExtensionCompat(
+      actorClient,
+      sessionId,
+      requestedExtensionMinutes
+    );
+    return textResult(JSON.stringify({ ok: true, ...result }, null, 2));
+  } catch (error) {
+    await clearSessionTimeboxPromptFingerprint(process.env.CLAUDE_SESSION_ID);
+    throw error;
+  }
 }
 async function handleApplyAction(args) {
   const client = await getClient();
@@ -5681,7 +6153,7 @@ async function handleApplyAction(args) {
 async function writeContinuationArtifact(data) {
   const path = continuationPath();
   await mkdir6(dirname4(path), { recursive: true });
-  await writeFile6(path, JSON.stringify(data, null, 2), { mode: 384 });
+  await writeFile7(path, JSON.stringify(data, null, 2), { mode: 384 });
 }
 async function loadContinuationArtifact(options) {
   try {
@@ -5689,7 +6161,7 @@ async function loadContinuationArtifact(options) {
   } catch {
     return null;
   }
-  const raw = await readFile6(continuationPath(), "utf-8");
+  const raw = await readFile7(continuationPath(), "utf-8");
   const parsed = JSON.parse(raw);
   if (options.consume) {
     await unlink2(continuationPath());
