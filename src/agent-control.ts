@@ -4,6 +4,7 @@ import type {
   HeadsDownCall,
   HeadsDownClient,
 } from "@headsdown/sdk";
+import type { AgentSessionSummaryView } from "./session-timebox.js";
 import {
   isHeadsDownActionKey,
   isHeadsDownCallKey,
@@ -21,6 +22,7 @@ export type AgentRunSummaryView = Pick<AgentRunSummary, "runId" | "callKey" | "a
 export interface AgentControlOverviewView {
   headsdownCall: HeadsDownCallView;
   runSummaries?: AgentRunSummaryView[] | null;
+  sessionSummaries?: AgentSessionSummaryView[] | null;
 }
 
 export interface RenderedHeadsDownCall {
@@ -69,6 +71,15 @@ const AGENT_CONTROL_OVERVIEW_QUERY = `
         callKey
         allowedActionKeys
       }
+      sessionSummaries {
+        sessionId
+        timeboxExpiresAt
+        pendingTimeboxExtensionRequest {
+          id
+          requestedExtensionMinutes
+          requestedAt
+        }
+      }
     }
   }
 `;
@@ -99,19 +110,29 @@ export function renderHeadsDownCall(call: HeadsDownCallView): RenderedHeadsDownC
 export async function getAgentControlOverviewCompat(
   client: HeadsDownClient,
 ): Promise<AgentControlOverviewView | null> {
-  try {
-    if (typeof client.getAgentControlOverview === "function") {
-      const overview = await client.getAgentControlOverview();
-      return overview as AgentControlOverview;
+  let nativeOverview: AgentControlOverviewView | null = null;
+
+  if (typeof client.getAgentControlOverview === "function") {
+    try {
+      nativeOverview = (await client.getAgentControlOverview()) as AgentControlOverview;
+      if (nativeOverview.sessionSummaries && nativeOverview.sessionSummaries.length > 0) {
+        return nativeOverview;
+      }
+    } catch {
+      nativeOverview = null;
     }
+  }
 
-    const graphql = getLowLevelGraphQLClient(client);
-    if (!graphql) return null;
+  const graphql = getLowLevelGraphQLClient(client);
+  if (!graphql) return nativeOverview;
 
+  try {
     const data = await graphql.request(AGENT_CONTROL_OVERVIEW_QUERY);
-    return (data.agentControlOverview as AgentControlOverviewView | null | undefined) ?? null;
+    return (
+      (data.agentControlOverview as AgentControlOverviewView | null | undefined) ?? nativeOverview
+    );
   } catch {
-    return null;
+    return nativeOverview;
   }
 }
 

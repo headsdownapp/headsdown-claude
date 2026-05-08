@@ -7,8 +7,8 @@ var __require = /* @__PURE__ */ ((x) => typeof require !== "undefined" ? require
 });
 
 // src/cli.ts
-import { readFile as readFile10, writeFile as writeFile9, unlink as unlink3, access as access5 } from "node:fs/promises";
-import { join as join11, dirname as dirname6 } from "node:path";
+import { readFile as readFile11, writeFile as writeFile10, unlink as unlink3, access as access5 } from "node:fs/promises";
+import { join as join12, dirname as dirname6 } from "node:path";
 import { homedir as homedir9 } from "node:os";
 import { mkdirSync } from "node:fs";
 
@@ -187,6 +187,9 @@ var PROHIBITED_KEYS = /* @__PURE__ */ new Set([
   "prompt",
   "prompts",
   "model_response",
+  "model_responses",
+  "transcript",
+  "transcripts",
   "message",
   "messages",
   "content",
@@ -197,6 +200,7 @@ var PROHIBITED_KEYS = /* @__PURE__ */ new Set([
   "diff",
   "patch",
   "snippet",
+  "source",
   "file",
   "files",
   "file_contents",
@@ -205,10 +209,14 @@ var PROHIBITED_KEYS = /* @__PURE__ */ new Set([
   "path",
   "paths",
   "repo",
+  "repo_name",
   "repository",
   "repository_name",
+  "git_repo",
+  "git_repository",
   "branch",
   "branch_name",
+  "git_branch",
   "directory",
   "directory_name",
   "terminal_output",
@@ -321,7 +329,7 @@ function buildAgentRunEventInput(input) {
     payload,
     progressPayload: progressPayload2
   });
-  return privacySafeClone(variablesInput, "input");
+  return privacySafeClone(variablesInput, "input", ENVELOPE_TOP_LEVEL_EXEMPT_KEYS);
 }
 function startedEvent(context, payload) {
   return { ...context, eventType: "agent_run.started", payload };
@@ -364,6 +372,14 @@ function deferredDecisionResolvedEvent(context, payload) {
     payload
   };
 }
+function deferredDecisionReAttemptedEvent(context, payload) {
+  return {
+    ...context,
+    eventType: "deferred_decision.re_attempted",
+    idempotencyKey: `${context.runId}:deferred_decision.re_attempted:${payload.decision_id}`,
+    payload
+  };
+}
 function buildAgentRunEventIdempotencyKey(runId, eventType, sequence) {
   const suffix = sequence === void 0 ? Date.now().toString(36) : String(sequence);
   return `${safeToken(runId)}:${safeToken(eventType)}:${suffix}`;
@@ -395,9 +411,43 @@ function bucketScopeGrowth(count) {
   return "over_10_files";
 }
 function assertPrivacySafe(value, path = "input") {
-  void privacySafeClone(value, path);
+  validatePrivacySafe(value, path);
 }
-function privacySafeClone(value, path) {
+function validatePrivacySafe(value, path, topLevelExemptKeys) {
+  if (value === null || value === void 0)
+    return;
+  if (Array.isArray(value)) {
+    assertPlainJsonArray(value, path);
+    for (let index = 0; index < value.length; index += 1) {
+      validatePrivacySafe(value[index], `${path}[${index}]`);
+    }
+    return;
+  }
+  if (typeof value === "object") {
+    if (!isPlainRecord(value)) {
+      throw new ValidationError("Agent run events can only include plain JSON-compatible metadata objects.", path);
+    }
+    for (const [key, entry] of plainRecordEntries(value, path)) {
+      const exempt = topLevelExemptKeys?.has(key) ?? false;
+      if (!exempt && isProhibitedPrivacyKey(key)) {
+        throw new ValidationError(`Agent run events cannot include raw-content field '${key}'.`, path);
+      }
+      validatePrivacySafe(entry, `${path}.${key}`);
+    }
+    return;
+  }
+  if (typeof value === "function" || typeof value === "symbol" || typeof value === "bigint") {
+    throw new ValidationError("Agent run events can only include JSON-compatible metadata values.", path);
+  }
+  if (typeof value === "number" && !Number.isFinite(value)) {
+    throw new ValidationError("Agent run events can only include finite numeric metadata values.", path);
+  }
+  if (typeof value === "string" && UNSAFE_VALUE_PATTERNS.some((pattern) => pattern.test(value))) {
+    throw new ValidationError("Agent run events cannot include paths, URLs, logs, secrets, or raw content.", path);
+  }
+}
+var ENVELOPE_TOP_LEVEL_EXEMPT_KEYS = /* @__PURE__ */ new Set(["source"]);
+function privacySafeClone(value, path, topLevelExemptKeys) {
   if (value === null || value === void 0)
     return value;
   if (Array.isArray(value)) {
@@ -415,7 +465,8 @@ function privacySafeClone(value, path) {
     }
     const clone = /* @__PURE__ */ Object.create(null);
     for (const [key, entry] of plainRecordEntries(value, path)) {
-      if (isProhibitedPrivacyKey(key)) {
+      const exempt = topLevelExemptKeys?.has(key) ?? false;
+      if (!exempt && isProhibitedPrivacyKey(key)) {
         throw new ValidationError(`Agent run events cannot include raw-content field '${key}'.`, path);
       }
       clone[key] = privacySafeClone(entry, `${path}.${key}`);
@@ -732,7 +783,6 @@ var GraphQLClient = class {
           signal: controller.signal
         });
       } catch (error) {
-        clearTimeout(timer);
         const networkError = error instanceof DOMException && error.name === "AbortError" ? new NetworkError(`Request timed out after ${this.timeout}ms`) : new NetworkError(`Failed to connect to HeadsDown API at ${this.baseUrl}: ${error?.message ?? String(error)}`, error instanceof Error ? error : void 0);
         if (attempt < this.retries) {
           const delayMs = this.retryDelayMs * Math.pow(2, attempt);
@@ -1509,6 +1559,21 @@ var PROFILE_QUERY = `
     }
   }
 `;
+var REQUEST_SESSION_TIMEBOX_EXTENSION_MUTATION = `
+  mutation RequestSessionTimeboxExtension($sessionId: String!, $requestedExtensionMinutes: Int!) {
+    requestSessionTimeboxExtension(
+      sessionId: $sessionId
+      requestedExtensionMinutes: $requestedExtensionMinutes
+    ) {
+      sessionId
+      pendingTimeboxExtensionRequest {
+        id
+        requestedExtensionMinutes
+        requestedAt
+      }
+    }
+  }
+`;
 var OVERRIDE_VERDICT_MUTATION = `
   mutation OverrideVerdict($input: OverrideInput!) {
     overrideVerdict(input: $input) {
@@ -1949,6 +2014,23 @@ var HeadsDownClient = class _HeadsDownClient {
   async getAgentControlOverview() {
     const data = await this.graphql.request(AGENT_CONTROL_OVERVIEW_QUERY);
     return data.agentControlOverview;
+  }
+  /**
+   * Request a user-approved extension for a session timebox.
+   * This does not extend the session directly; it creates a metadata-only HeadsDown approval request.
+   */
+  async requestSessionTimeboxExtension(input) {
+    validateSessionTimeboxExtensionRequest(input);
+    const data = await this.graphql.request(REQUEST_SESSION_TIMEBOX_EXTENSION_MUTATION, {
+      sessionId: input.sessionId.trim(),
+      requestedExtensionMinutes: input.requestedExtensionMinutes
+    });
+    const session = data.requestSessionTimeboxExtension;
+    const request = session?.pendingTimeboxExtensionRequest;
+    if (!session || !request) {
+      throw new ApiError("HeadsDown API returned no requestSessionTimeboxExtension data.");
+    }
+    return { sessionId: session.sessionId, request };
   }
   /**
    * Get a privacy-safe intervention replay by task proposal/action target id.
@@ -2492,6 +2574,9 @@ var HeadsDownClient = class _HeadsDownClient {
   async reportDeferredDecisionResolved(context, payload) {
     return this.reportAgentRunEvent(deferredDecisionResolvedEvent(context, payload));
   }
+  async reportDeferredDecisionReAttempted(context, payload) {
+    return this.reportAgentRunEvent(deferredDecisionReAttemptedEvent(context, payload));
+  }
   async reportSteeringOutcome(context, payload) {
     return this.reportAgentRunEvent(steeringOutcomeReportedEvent(context, payload));
   }
@@ -2627,6 +2712,9 @@ var WRAP_UP_FIELDS = /* @__PURE__ */ new Set([
   "delivery_mode",
   "wrapUpGuidance"
 ]);
+var SAFE_SESSION_TOKEN_PATTERN = /^[A-Za-z0-9_.:-]{1,255}$/;
+var TIMEBOX_EXTENSION_REQUEST_FIELDS = /* @__PURE__ */ new Set(["sessionId", "requestedExtensionMinutes"]);
+var MAX_REQUESTED_EXTENSION_MINUTES = 480;
 var AVAILABILITY_FIELDS = /* @__PURE__ */ new Set([
   "status",
   "statusEmoji",
@@ -2635,6 +2723,25 @@ var AVAILABILITY_FIELDS = /* @__PURE__ */ new Set([
   "autoRespond",
   "lock"
 ]);
+function validateSessionTimeboxExtensionRequest(input) {
+  if (!input || typeof input !== "object" || Array.isArray(input)) {
+    throw new ValidationError("Session timebox extension request input is required.", "input");
+  }
+  for (const key of Object.keys(input)) {
+    if (!TIMEBOX_EXTENSION_REQUEST_FIELDS.has(key)) {
+      throw new ValidationError("Session timebox extension requests only accept sessionId and requestedExtensionMinutes.", key);
+    }
+  }
+  if (!isSafeSessionToken(input.sessionId)) {
+    throw new ValidationError("sessionId must be a privacy-safe opaque token.", "sessionId");
+  }
+  if (!Number.isInteger(input.requestedExtensionMinutes) || input.requestedExtensionMinutes <= 0 || input.requestedExtensionMinutes > MAX_REQUESTED_EXTENSION_MINUTES) {
+    throw new ValidationError(`requestedExtensionMinutes must be an integer between 1 and ${MAX_REQUESTED_EXTENSION_MINUTES}.`, "requestedExtensionMinutes");
+  }
+}
+function isSafeSessionToken(value) {
+  return typeof value === "string" && value.trim() === value && SAFE_SESSION_TOKEN_PATTERN.test(value) && !value.includes("/") && !value.includes("\\") && !value.includes("://") && !value.includes(".git");
+}
 function validateAvailabilityOverrideInput(input) {
   if (!input || typeof input !== "object") {
     throw new ValidationError("Availability override input is required.", "input");
@@ -3063,6 +3170,69 @@ function describeExecutionDirective(input) {
   };
 }
 
+// node_modules/@headsdown/sdk/dist/referee/labels.js
+var LOCAL_REFEREE_CHECK_LABELS = {
+  validation_status: "Validation completed",
+  max_files_touched: "Scope within contract",
+  max_tool_calls: "Scope within contract",
+  require_tests: "Validation completed",
+  network_required: "Network requirement satisfied",
+  outcome: "Definition of done satisfied",
+  git_commit_present: "Commit present"
+};
+
+// node_modules/@headsdown/sdk/dist/referee/receipt.js
+var RECEIPT_CHECK_TYPES = new Set(Object.keys(LOCAL_REFEREE_CHECK_LABELS));
+
+// node_modules/@headsdown/sdk/dist/referee/outcome-payload.js
+var PROHIBITED_KEYS2 = /* @__PURE__ */ new Set([
+  "prompt",
+  "prompts",
+  "source_code",
+  "code",
+  "diff",
+  "patch",
+  "file",
+  "files",
+  "file_path",
+  "path",
+  "repo",
+  "repository",
+  "branch",
+  "terminal",
+  "stdout",
+  "stderr",
+  "output",
+  "log",
+  "logs",
+  "issue_body",
+  "pr_body",
+  "ticket_body",
+  "url",
+  "message",
+  "content",
+  "contents",
+  "hash",
+  "secret",
+  "secrets",
+  "token",
+  "tokens",
+  "access_token",
+  "access_tokens",
+  "refresh_token",
+  "refresh_tokens",
+  "api_key",
+  "api_keys",
+  "password",
+  "cookie",
+  "environment",
+  "environment_variable",
+  "environment_variables",
+  "env_var",
+  "env_vars"
+]);
+var PROHIBITED_COMPACT_KEYS2 = new Set(Array.from(PROHIBITED_KEYS2, (key) => key.replace(/_/g, "")));
+
 // node_modules/@headsdown/sdk/dist/types.js
 var HEADSDOWN_CALL_KEYS = [
   "good_to_run",
@@ -3302,7 +3472,7 @@ var CLASSIFIER_FIXTURES = [
   { action: "git push origin main", expected: "permanent" },
   { action: "force-push origin main", expected: "critical" },
   { action: "drop database", expected: "critical" },
-  { action: "ask_user{recovery, last=edit:failed}", expected: "permanent" },
+  { action: "ask_user{recovery_decision, last=edit:failed}", expected: "permanent" },
   { action: "ask_user{tooling_choice, last=bash:succeeded}", expected: "routine" },
   { action: "ask_user{scope_clarification, last=webfetch:succeeded}", expected: "notable" },
   { action: "ask_user{approval_request, last=none:unavailable}", expected: "notable" }
@@ -4042,6 +4212,127 @@ function isRecord(value) {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
+// node_modules/@headsdown/sdk/dist/integration-event.js
+var VARIANT_SPECS = {
+  session_started: {
+    wire_type: "integration.session_started",
+    required: ["session_id"],
+    optional: ["capabilities"],
+    enums: {}
+  },
+  session_ended: {
+    wire_type: "integration.session_ended",
+    required: ["session_id", "outcome"],
+    optional: ["duration_seconds", "turn_count", "reason", "ended_at"],
+    enums: {
+      outcome: ["succeeded", "failed", "cancelled", "timed_out"],
+      reason: [
+        "clear",
+        "resume",
+        "logout",
+        "prompt_input_exit",
+        "bypass_permissions_disabled",
+        "other"
+      ]
+    }
+  },
+  turn_started: {
+    wire_type: "integration.turn_started",
+    required: ["turn_id", "session_id"],
+    optional: ["sequence"],
+    enums: {}
+  },
+  turn_ended: {
+    wire_type: "integration.turn_ended",
+    required: ["turn_id", "session_id", "tool_calls_count"],
+    optional: ["duration_seconds"],
+    enums: {}
+  },
+  turn_failed: {
+    wire_type: "integration.turn_failed",
+    required: ["turn_id", "session_id", "reason"],
+    optional: ["duration_seconds"],
+    enums: {
+      reason: ["api_error", "timeout", "cancelled", "rate_limited", "unknown"]
+    }
+  },
+  tool_invoked: {
+    wire_type: "integration.tool_invoked",
+    required: ["tool_id", "session_id", "tool_kind"],
+    optional: ["turn_id", "tool_name_bucket"],
+    enums: {
+      tool_kind: ["read", "write", "external"]
+    }
+  },
+  tool_succeeded: {
+    wire_type: "integration.tool_succeeded",
+    required: ["tool_id", "session_id"],
+    optional: ["turn_id", "duration_ms_bucket"],
+    enums: {
+      duration_ms_bucket: ["under_100ms", "100ms_to_1s", "1s_to_10s", "over_10s", "unknown"]
+    }
+  },
+  tool_failed: {
+    wire_type: "integration.tool_failed",
+    required: ["tool_id", "session_id", "reason"],
+    optional: ["turn_id"],
+    enums: {
+      reason: ["permission_denied", "execution_error", "timeout", "unknown"]
+    }
+  },
+  permission_denied: {
+    wire_type: "integration.permission_denied",
+    required: ["decision_id", "session_id", "action_kind_bucket", "resolution"],
+    optional: [],
+    enums: {
+      resolution: ["user_denied", "auto_denied", "policy"]
+    }
+  },
+  context_compacted: {
+    wire_type: "integration.context_compacted",
+    required: ["session_id", "post_context_bucket"],
+    optional: ["turn_id", "prior_context_bucket"],
+    enums: {
+      prior_context_bucket: [
+        "under_10k",
+        "10k_to_50k",
+        "50k_to_100k",
+        "100k_to_200k",
+        "over_200k",
+        "unknown"
+      ],
+      post_context_bucket: [
+        "under_10k",
+        "10k_to_50k",
+        "50k_to_100k",
+        "100k_to_200k",
+        "over_200k",
+        "unknown"
+      ]
+    }
+  }
+};
+var INTEGRATION_EVENT_TYPE = {
+  session_started: VARIANT_SPECS.session_started.wire_type,
+  session_ended: VARIANT_SPECS.session_ended.wire_type,
+  turn_started: VARIANT_SPECS.turn_started.wire_type,
+  turn_ended: VARIANT_SPECS.turn_ended.wire_type,
+  turn_failed: VARIANT_SPECS.turn_failed.wire_type,
+  tool_invoked: VARIANT_SPECS.tool_invoked.wire_type,
+  tool_succeeded: VARIANT_SPECS.tool_succeeded.wire_type,
+  tool_failed: VARIANT_SPECS.tool_failed.wire_type,
+  permission_denied: VARIANT_SPECS.permission_denied.wire_type,
+  context_compacted: VARIANT_SPECS.context_compacted.wire_type
+};
+var SESSION_OUTCOMES = new Set(VARIANT_SPECS.session_ended.enums.outcome);
+var SESSION_ENDED_REASONS = new Set(VARIANT_SPECS.session_ended.enums.reason);
+var TURN_FAILED_REASONS = new Set(VARIANT_SPECS.turn_failed.enums.reason);
+var TOOL_KINDS = new Set(VARIANT_SPECS.tool_invoked.enums.tool_kind);
+var TOOL_DURATION_BUCKETS = new Set(VARIANT_SPECS.tool_succeeded.enums.duration_ms_bucket);
+var TOOL_FAILED_REASONS = new Set(VARIANT_SPECS.tool_failed.enums.reason);
+var PERMISSION_DENIED_RESOLUTIONS = new Set(VARIANT_SPECS.permission_denied.enums.resolution);
+var CONTEXT_SIZE_BUCKETS = new Set(VARIANT_SPECS.context_compacted.enums.post_context_bucket);
+
 // node_modules/@headsdown/sdk/dist/agent-rendering.js
 var AGENT_UNKNOWN_CALL_SAFE_ACTIONS = [
   "keep_queued",
@@ -4263,6 +4554,15 @@ var AGENT_CONTROL_OVERVIEW_QUERY2 = `
         callKey
         allowedActionKeys
       }
+      sessionSummaries {
+        sessionId
+        timeboxExpiresAt
+        pendingTimeboxExtensionRequest {
+          id
+          requestedExtensionMinutes
+          requestedAt
+        }
+      }
     }
   }
 `;
@@ -4287,17 +4587,24 @@ function renderHeadsDownCall(call) {
   };
 }
 async function getAgentControlOverviewCompat(client) {
-  try {
-    if (typeof client.getAgentControlOverview === "function") {
-      const overview = await client.getAgentControlOverview();
-      return overview;
+  let nativeOverview = null;
+  if (typeof client.getAgentControlOverview === "function") {
+    try {
+      nativeOverview = await client.getAgentControlOverview();
+      if (nativeOverview.sessionSummaries && nativeOverview.sessionSummaries.length > 0) {
+        return nativeOverview;
+      }
+    } catch {
+      nativeOverview = null;
     }
-    const graphql = getLowLevelGraphQLClient(client);
-    if (!graphql) return null;
+  }
+  const graphql = getLowLevelGraphQLClient(client);
+  if (!graphql) return nativeOverview;
+  try {
     const data = await graphql.request(AGENT_CONTROL_OVERVIEW_QUERY2);
-    return data.agentControlOverview ?? null;
+    return data.agentControlOverview ?? nativeOverview;
   } catch {
-    return null;
+    return nativeOverview;
   }
 }
 function toSdkHeadsDownCall(call) {
@@ -6007,8 +6314,8 @@ async function autopilotCli(action = process.argv[3]) {
 import { spawn as spawn2 } from "node:child_process";
 
 // src/hooks/post-tool-use.ts
-import { tmpdir as tmpdir2 } from "node:os";
-import { join as join9 } from "node:path";
+import { tmpdir as tmpdir3 } from "node:os";
+import { join as join10 } from "node:path";
 
 // src/hooks/runtime.ts
 import { spawn } from "node:child_process";
@@ -6095,13 +6402,97 @@ async function writeCounter(path, value) {
   await writeFile7(path, String(value));
 }
 
+// src/session-timebox.ts
+import { readFile as readFile9, rm, writeFile as writeFile8 } from "node:fs/promises";
+import { tmpdir as tmpdir2 } from "node:os";
+import { join as join9 } from "node:path";
+var DEFAULT_SESSION_TIMEBOX_THRESHOLD_MINUTES = 15;
+var SESSION_TIMEBOX_CHOICES = [
+  "Request 15 minutes",
+  "Request 30 minutes",
+  "Wrap up"
+];
+function sessionTimeboxPromptDedupePath(sessionId) {
+  const normalized = (sessionId ?? "default").replace(/[^a-zA-Z0-9._-]/g, "_");
+  return join9(tmpdir2(), `headsdown-session-timebox-prompt-${normalized}.state`);
+}
+async function readSessionTimeboxPromptFingerprint(sessionId) {
+  try {
+    const value = await readFile9(sessionTimeboxPromptDedupePath(sessionId), "utf-8");
+    const trimmed = value.trim();
+    return trimmed.length > 0 ? trimmed : null;
+  } catch {
+    return null;
+  }
+}
+async function writeSessionTimeboxPromptFingerprint(sessionId, fingerprint) {
+  await writeFile8(sessionTimeboxPromptDedupePath(sessionId), fingerprint, { mode: 384 });
+}
+function emptySessionTimeboxPromptState(thresholdMinutes = DEFAULT_SESSION_TIMEBOX_THRESHOLD_MINUTES) {
+  return {
+    active: false,
+    sessionId: null,
+    timeboxExpiresAt: null,
+    remainingMinutes: null,
+    thresholdMinutes,
+    fingerprint: null,
+    choices: SESSION_TIMEBOX_CHOICES
+  };
+}
+function resolveSessionTimeboxPrompt(input) {
+  const thresholdMinutes = normalizePositiveInteger(input.thresholdMinutes) ?? DEFAULT_SESSION_TIMEBOX_THRESHOLD_MINUTES;
+  const currentSessionId2 = cleanOpaqueId(input.currentSessionId);
+  if (!currentSessionId2) return emptySessionTimeboxPromptState(thresholdMinutes);
+  const summary2 = (input.sessionSummaries ?? []).find(
+    (item) => cleanOpaqueId(item.sessionId) === currentSessionId2
+  );
+  const sessionId = cleanOpaqueId(summary2?.sessionId);
+  const timeboxExpiresAt = cleanIsoTimestamp(summary2?.timeboxExpiresAt);
+  if (!sessionId || !timeboxExpiresAt || summary2?.pendingTimeboxExtensionRequest) {
+    return emptySessionTimeboxPromptState(thresholdMinutes);
+  }
+  const now = input.now ?? /* @__PURE__ */ new Date();
+  const remainingMinutes = minutesUntil(timeboxExpiresAt, now);
+  if (remainingMinutes <= 0 || remainingMinutes > thresholdMinutes) {
+    return emptySessionTimeboxPromptState(thresholdMinutes);
+  }
+  return {
+    active: true,
+    sessionId,
+    timeboxExpiresAt,
+    remainingMinutes,
+    thresholdMinutes,
+    fingerprint: `${sessionId}:${timeboxExpiresAt}:${thresholdMinutes}`,
+    choices: SESSION_TIMEBOX_CHOICES
+  };
+}
+function minutesUntil(value, now) {
+  const timestamp = Date.parse(value);
+  if (Number.isNaN(timestamp)) return 0;
+  return Math.max(0, Math.ceil((timestamp - now.getTime()) / 6e4));
+}
+function cleanIsoTimestamp(value) {
+  if (typeof value !== "string") return null;
+  const trimmed = value.trim();
+  if (!trimmed) return null;
+  return Number.isNaN(Date.parse(trimmed)) ? null : trimmed;
+}
+function cleanOpaqueId(value) {
+  if (typeof value !== "string") return null;
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : null;
+}
+function normalizePositiveInteger(value) {
+  return typeof value === "number" && Number.isInteger(value) && value > 0 ? value : null;
+}
+
 // src/hooks/post-tool-use.ts
 async function postToolUseHandler(input, runner) {
   const hookInput = parseJsonObject(input);
   const toolName = stringField2(hookInput.tool_name) || stringField2(hookInput.toolName);
   const toolType = classifyTool(toolName);
   const sessionId = process.env.CLAUDE_SESSION_ID || "default";
-  const counterFile = join9(tmpdir2(), `headsdown-file-count-${sessionId}`);
+  const counterFile = join10(tmpdir3(), `headsdown-file-count-${sessionId}`);
   const current = await readCounter(counterFile);
   const count = toolType === "write" ? current + 1 : current;
   if (toolType === "write") await writeCounter(counterFile, count);
@@ -6125,8 +6516,7 @@ async function postToolUseHandler(input, runner) {
     const remainingMinutes = stringValue(attentionWindow?.remainingMinutes);
     const hintsText = arrayOfStrings(attentionWindow?.hints).join("; ");
     const wrapSupported = allowedActions.includes("pause_and_summarize");
-    const allowDurationSupported = allowedActions.includes("allow_for_duration");
-    if (source === "time_box" && !wrapSupported && !allowDurationSupported) {
+    if (source === "time_box" && !wrapSupported) {
       const parts = [
         "HeadsDown box warning: a self-declared local box deadline is active. Keep scope tight before the deadline; the box will not stop work automatically when it passes. Use /headsdown:timebox clear to clear it or /headsdown:timebox <duration> to replace it."
       ];
@@ -6140,7 +6530,7 @@ async function postToolUseHandler(input, runner) {
       }
     } else {
       const parts = [
-        "HeadsDown call: Window closing. Do not autonomously call headsdown_apply_action with action_key pause_and_summarize for this call. The user must invoke /headsdown:wrap explicitly. You may call headsdown_apply_action with action_key allow_for_duration only if the user explicitly asks for an extension."
+        "HeadsDown call: Window closing. Do not autonomously call headsdown_apply_action with action_key pause_and_summarize for this call. The user must invoke /headsdown:wrap explicitly. Session timebox extension requests are handled only by the session timebox prompt."
       ];
       if (runId) {
         parts.push(`Target run_id: ${runId}.`);
@@ -6150,7 +6540,6 @@ async function postToolUseHandler(input, runner) {
         );
       }
       if (wrapSupported) parts.push("Wrap action is currently allowed.");
-      if (allowDurationSupported) parts.push("Extend action is currently allowed.");
       if (source === "time_box") parts.push("Active box deadline is driving this warning.");
       appendLabeled(parts, "Deadline", deadlineAt);
       appendLabeled(parts, "Remaining minutes", remainingMinutes);
@@ -6158,8 +6547,15 @@ async function postToolUseHandler(input, runner) {
       appendLabeled(parts, "Current wrap-up hints", hintsText);
       contexts.push(parts.join(" "));
       if (toolType === "write") {
-        message += " Window closing is active. Use /headsdown:extend to request more time or /headsdown:wrap to pause and summarize.";
+        message += " Window closing is active. Use /headsdown:wrap to pause and summarize if you want to stop here.";
       }
+    }
+  }
+  const sessionTimeboxContext = await buildSessionTimeboxPromptContext(progressRecord, sessionId);
+  if (sessionTimeboxContext) {
+    contexts.push(sessionTimeboxContext);
+    if (toolType === "write") {
+      message += " Session timebox is closing. Ask whether to request 15 minutes, request 30 minutes, or wrap up.";
     }
   }
   appendWarning(contexts, progressRecord, "timeBoxError", (value) => {
@@ -6193,10 +6589,14 @@ async function postToolUseHandler(input, runner) {
   }
   const additionalContext = contexts.filter(Boolean).join(" ");
   if (emitSystemMessage && additionalContext) {
-    return { systemMessage: message, hookSpecificOutput: { hookEventName: "PostToolUse", additionalContext } };
+    return {
+      systemMessage: message,
+      hookSpecificOutput: { hookEventName: "PostToolUse", additionalContext }
+    };
   }
   if (emitSystemMessage) return { systemMessage: message };
-  if (additionalContext) return { hookSpecificOutput: { hookEventName: "PostToolUse", additionalContext } };
+  if (additionalContext)
+    return { hookSpecificOutput: { hookEventName: "PostToolUse", additionalContext } };
   return void 0;
 }
 function classifyTool(toolName) {
@@ -6218,6 +6618,28 @@ async function runProgress(runner, toolType, count) {
   } catch {
     return { payload: null, error: "HeadsDown progress command returned invalid JSON." };
   }
+}
+async function buildSessionTimeboxPromptContext(progressRecord, claudeSessionId) {
+  const prompt = asRecord(progressRecord?.sessionTimeboxPrompt);
+  if (!prompt || !boolField(prompt.active)) return null;
+  const sessionId = stringField2(prompt.sessionId);
+  const fingerprint = stringField2(prompt.fingerprint);
+  if (!sessionId || !fingerprint) return null;
+  const previousFingerprint = await readSessionTimeboxPromptFingerprint(claudeSessionId);
+  if (previousFingerprint === fingerprint) return null;
+  await writeSessionTimeboxPromptFingerprint(claudeSessionId, fingerprint);
+  const remainingMinutes = stringValue(prompt.remainingMinutes);
+  const thresholdMinutes = stringValue(prompt.thresholdMinutes);
+  const parts = [
+    "HeadsDown session timebox is closing. Ask the user with AskUserQuestion and exactly these choices: Request 15 minutes, Request 30 minutes, Wrap up.",
+    `If the user chooses Request 15 minutes, call headsdown_session_timebox with action=request_extension, session_id=${sessionId}, requested_extension_minutes=15.`,
+    `If the user chooses Request 30 minutes, call headsdown_session_timebox with action=request_extension, session_id=${sessionId}, requested_extension_minutes=30.`,
+    "If the user chooses Wrap up or ignores the prompt, do not request an extension; wrap up cleanly when appropriate.",
+    "Do not include prompts, transcript text, file paths, repo names, logs, code, or free-form reasons in the extension request."
+  ];
+  appendLabeled(parts, "Remaining minutes", remainingMinutes);
+  appendLabeled(parts, "Warning threshold minutes", thresholdMinutes);
+  return parts.join(" ");
 }
 function appendLabeled(parts, label, value) {
   if (value) parts.push(`${label}: ${value}.`);
@@ -6592,9 +7014,9 @@ function globishMatch(value, pattern) {
 }
 
 // src/time-box-store.ts
-import { mkdir as mkdir7, readFile as readFile9, unlink as unlink2, writeFile as writeFile8 } from "node:fs/promises";
+import { mkdir as mkdir7, readFile as readFile10, unlink as unlink2, writeFile as writeFile9 } from "node:fs/promises";
 import { createHash as createHash2 } from "node:crypto";
-import { dirname as dirname5, join as join10 } from "node:path";
+import { dirname as dirname5, join as join11 } from "node:path";
 import { homedir as homedir8 } from "node:os";
 var LocalTimeBoxStore = class {
   constructor(filePath = defaultTimeBoxPath(), sessionIdHash = defaultSessionIdHash()) {
@@ -6613,12 +7035,12 @@ var LocalTimeBoxStore = class {
       throw new Error("Cannot save HeadsDown box for a different Claude session.");
     }
     await mkdir7(dirname5(this.filePath), { recursive: true });
-    await writeFile8(this.filePath, JSON.stringify(state, null, 2), { mode: 384 });
+    await writeFile9(this.filePath, JSON.stringify(state, null, 2), { mode: 384 });
   }
   async load() {
     let raw;
     try {
-      raw = await readFile9(this.filePath, "utf-8");
+      raw = await readFile10(this.filePath, "utf-8");
     } catch (error) {
       if (isNodeError(error) && error.code === "ENOENT") return null;
       throw new Error(`Could not read HeadsDown box at ${this.filePath}: ${errorMessage(error)}`);
@@ -6654,7 +7076,7 @@ function defaultSessionIdHash(env = process.env) {
 function defaultTimeBoxPath(env = process.env) {
   const override = clean2(env.HEADSDOWN_TIME_BOX_PATH);
   if (override) return override;
-  return join10(homedir8(), ".config", "headsdown", `time-box-${defaultSessionIdHash(env)}.json`);
+  return join11(homedir8(), ".config", "headsdown", `time-box-${defaultSessionIdHash(env)}.json`);
 }
 function hashSessionId(sessionId) {
   return createHash2("sha256").update(sessionId).digest("hex").slice(0, 16);
@@ -6740,7 +7162,7 @@ function buildTimeBoxStatus(state, now = /* @__PURE__ */ new Date()) {
       message: "No active HeadsDown box for this session."
     };
   }
-  const remainingMinutes = minutesUntil(state.expiresAt, now);
+  const remainingMinutes = minutesUntil2(state.expiresAt, now);
   const thresholdMinutes = resolveTimeBoxThresholdMinutes(state.durationMinutes);
   const isPastDeadline = remainingMinutes <= 0;
   return {
@@ -6754,11 +7176,11 @@ function buildTimeBoxStatus(state, now = /* @__PURE__ */ new Date()) {
   };
 }
 function formatTimeBoxConfirmation(state, now = /* @__PURE__ */ new Date()) {
-  const remaining = minutesUntil(state.expiresAt, now);
+  const remaining = minutesUntil2(state.expiresAt, now);
   return `HeadsDown box set for ${state.durationMinutes} minutes. Deadline: ${formatTimeBoxClock(state.expiresAt)}. Remaining minutes: ${remaining}.`;
 }
 function formatTimeBoxStatus(state, now = /* @__PURE__ */ new Date()) {
-  const remaining = minutesUntil(state.expiresAt, now);
+  const remaining = minutesUntil2(state.expiresAt, now);
   const threshold = resolveTimeBoxThresholdMinutes(state.durationMinutes);
   if (remaining <= 0) {
     return `HeadsDown box deadline passed at ${formatTimeBoxClock(state.expiresAt)}. Keep going with tighter wrap-up guidance until the box is cleared or replaced.`;
@@ -6834,7 +7256,7 @@ function normalizeTimeBoxWindow(state, now) {
   return {
     deadlineAt,
     thresholdMinutes: resolveTimeBoxThresholdMinutes(state.durationMinutes),
-    remainingMinutes: minutesUntil(deadlineAt, now),
+    remainingMinutes: minutesUntil2(deadlineAt, now),
     hints: [
       "Self-declared box is active. Keep scope tight before the deadline; do not stop automatically when it passes."
     ],
@@ -6844,7 +7266,7 @@ function normalizeTimeBoxWindow(state, now) {
 function resolveTimeBoxThresholdMinutes(durationMinutes) {
   return Math.min(DEFAULT_TIME_BOX_THRESHOLD_MINUTES, Math.max(1, durationMinutes));
 }
-function minutesUntil(value, now) {
+function minutesUntil2(value, now) {
   const timestamp = Date.parse(value);
   if (Number.isNaN(timestamp)) return 0;
   return Math.max(0, Math.ceil((timestamp - now.getTime()) / 6e4));
@@ -6880,7 +7302,9 @@ function buildReportProgressResponse(input) {
     callKey: currentRun.callKey,
     wrapUpGuidance: input.wrapUpGuidance ?? null,
     timeBox: input.timeBox ?? null,
-    now: input.now
+    now: input.now,
+    overview: input.overview,
+    currentSessionId: input.currentSessionId
   });
   return {
     reported: true,
@@ -6899,7 +7323,9 @@ function buildReportProgressUnavailableResponse(input) {
     callKey: currentRun.callKey,
     wrapUpGuidance: input.wrapUpGuidance ?? null,
     timeBox: input.timeBox ?? null,
-    now: input.now
+    now: input.now,
+    overview: input.overview ?? null,
+    currentSessionId: input.currentSessionId
   });
   return {
     reported: false,
@@ -6922,12 +7348,22 @@ function buildReportProgressGuidance(input) {
     forceTimeBoxWarning: backendClosing
   });
   const attentionWindowClosing = !!effectiveAttentionWindow && (backendClosing || isWithinWarningWindow(effectiveAttentionWindow));
+  const thresholdMinutes = effectiveAttentionWindow?.thresholdMinutes ?? input.wrapUpGuidance?.thresholdMinutes ?? null;
+  const sessionTimeboxPrompt = resolveSessionTimeboxPrompt({
+    sessionSummaries: input.overview?.sessionSummaries ?? null,
+    currentSessionId: input.currentSessionId,
+    thresholdMinutes,
+    now: input.now
+  });
+  const promptFields = sessionTimeboxPrompt.active ? { sessionTimeboxPrompt } : {};
   return attentionWindowClosing ? {
     attentionWindowClosing: true,
-    attentionWindow: buildAttentionWindowState(effectiveAttentionWindow)
+    attentionWindow: buildAttentionWindowState(effectiveAttentionWindow),
+    ...promptFields
   } : {
     attentionWindowClosing: false,
-    attentionWindow: null
+    attentionWindow: null,
+    ...promptFields
   };
 }
 function resolveCurrentRunContext(input) {
@@ -7066,6 +7502,11 @@ async function status() {
     forceTimeBoxWarning: currentRun.callKey === "attention_window_closing"
   });
   const attentionWindowClosing = !!effectiveAttentionWindow && (currentRun.callKey === "attention_window_closing" || isWithinWarningWindow(effectiveAttentionWindow));
+  const sessionTimeboxPrompt = resolveSessionTimeboxPrompt({
+    sessionSummaries: overview?.sessionSummaries ?? null,
+    currentSessionId: process.env.CLAUDE_SESSION_ID,
+    thresholdMinutes: effectiveAttentionWindow?.thresholdMinutes ?? availability?.wrapUpGuidance?.thresholdMinutes ?? null
+  });
   console.log(
     JSON.stringify(
       {
@@ -7079,6 +7520,7 @@ async function status() {
         timeBoxError: timeBoxLoad.error,
         attentionWindowClosing,
         effectiveAttentionWindow,
+        sessionTimeboxPrompt,
         summary: contract && availability ? formatSummary(contract, availability, renderedHeadsDownCall?.title) : null,
         wrapUpInstruction: contract && availability ? resolveExecutionInstruction({
           contract,
@@ -7116,7 +7558,7 @@ async function proposals() {
     const metaPath = store.filePath.replace(/\.json$/, ".meta.json");
     let meta = {};
     try {
-      const metaRaw = await readFile10(metaPath, "utf-8");
+      const metaRaw = await readFile11(metaPath, "utf-8");
       meta = JSON.parse(metaRaw);
     } catch {
     }
@@ -7136,8 +7578,8 @@ async function nextWindow() {
   }
   const transitionAt = new Date(nextTransitionAt);
   const now = /* @__PURE__ */ new Date();
-  const minutesUntil2 = Math.round((transitionAt.getTime() - now.getTime()) / 6e4);
-  if (minutesUntil2 < 0 || minutesUntil2 > 60) {
+  const minutesUntil3 = Math.round((transitionAt.getTime() - now.getTime()) / 6e4);
+  if (minutesUntil3 < 0 || minutesUntil3 > 60) {
     console.log(JSON.stringify(null));
     return;
   }
@@ -7145,7 +7587,7 @@ async function nextWindow() {
     JSON.stringify({
       nextWindowLabel: next?.label ?? null,
       nextWindowMode: next?.mode ?? null,
-      minutesUntil: minutesUntil2,
+      minutesUntil: minutesUntil3,
       wrapUpThresholdMinutes: wrapUpGuidance.thresholdMinutes ?? null
     })
   );
@@ -7156,7 +7598,7 @@ async function digestCount() {
   const summaries = await actorClient.listDigestSummaries({ latest: 50 });
   console.log(String(summaries.length));
 }
-var CONTINUATION_PATH = join11(homedir9(), ".config", "headsdown", "continuation.json");
+var CONTINUATION_PATH = join12(homedir9(), ".config", "headsdown", "continuation.json");
 async function actionMarker() {
   const subcommand = process.argv[3];
   const store = new LocalActionMarkerStore();
@@ -7264,11 +7706,11 @@ async function continuation() {
       }
       JSON.parse(data);
       mkdirSync(dirname6(CONTINUATION_PATH), { recursive: true });
-      await writeFile9(CONTINUATION_PATH, data, { mode: 384 });
+      await writeFile10(CONTINUATION_PATH, data, { mode: 384 });
       break;
     }
     case "load": {
-      const raw = await readFile10(CONTINUATION_PATH, "utf-8");
+      const raw = await readFile11(CONTINUATION_PATH, "utf-8");
       console.log(raw);
       await unlink3(CONTINUATION_PATH);
       break;
@@ -7430,7 +7872,8 @@ async function reportProgress() {
           activeRun,
           overview,
           wrapUpGuidance,
-          timeBox: timeBoxLoad.state
+          timeBox: timeBoxLoad.state,
+          currentSessionId: process.env.CLAUDE_SESSION_ID
         }),
         ...timeBoxLoad.error ? { timeBoxError: timeBoxLoad.error } : {},
         ...availabilityError ? { availabilityError } : {},
@@ -7446,7 +7889,8 @@ async function reportProgress() {
           message: authFailure ? "HeadsDown authentication is unavailable. Run /headsdown:auth before relying on progress reporting." : "HeadsDown progress reporting is unavailable. Check the included details or try again later.",
           details: safeErrorMessage2(error),
           activeRun,
-          timeBox: timeBoxLoad.state
+          timeBox: timeBoxLoad.state,
+          currentSessionId: process.env.CLAUDE_SESSION_ID
         }),
         ...timeBoxLoad.error ? { timeBoxError: timeBoxLoad.error } : {}
       })

@@ -68,6 +68,7 @@ describe("HeadsDown MCP Server", () => {
           "headsdown_override",
           "headsdown_propose",
           "headsdown_report",
+          "headsdown_session_timebox",
           "headsdown_status",
         ]),
       );
@@ -87,6 +88,22 @@ describe("HeadsDown MCP Server", () => {
 
       const propose = result.tools.find((t) => t.name === "headsdown_propose");
       expect(propose?.inputSchema.required).toEqual(["description"]);
+    });
+
+    it("headsdown_session_timebox requires only session id and requested minutes", async () => {
+      const client = await createTestClient();
+      const result = await client.listTools();
+
+      const sessionTimebox = result.tools.find((t) => t.name === "headsdown_session_timebox");
+      expect(sessionTimebox?.inputSchema.required).toEqual([
+        "session_id",
+        "requested_extension_minutes",
+      ]);
+      expect(Object.keys(sessionTimebox?.inputSchema.properties ?? {})).toEqual([
+        "action",
+        "session_id",
+        "requested_extension_minutes",
+      ]);
     });
 
     it("tool descriptions mention HeadsDown and availability", async () => {
@@ -424,6 +441,59 @@ describe("HeadsDown MCP Server", () => {
       expect(props.action.type).toBe("string");
       expect(props.branch.type).toBe("string");
       expect(props.resume_instruction.type).toBe("string");
+    });
+  });
+
+  describe("headsdown_session_timebox", () => {
+    it("requests extension with only opaque session id and requested minutes", async () => {
+      const requestSessionTimeboxExtension = vi.fn().mockResolvedValue({
+        sessionId: "session-1",
+        request: {
+          id: "request-1",
+          requestedExtensionMinutes: 15,
+          requestedAt: "2026-04-28T10:00:00.000Z",
+        },
+      });
+      const mockClient = {
+        withActor: vi.fn().mockReturnThis(),
+        requestSessionTimeboxExtension,
+      } as unknown as HeadsDownClient;
+      vi.spyOn(HeadsDownClient, "fromCredentials").mockResolvedValue(mockClient);
+
+      const client = await createTestClient();
+      const result = await client.callTool({
+        name: "headsdown_session_timebox",
+        arguments: {
+          action: "request_extension",
+          session_id: "session-1",
+          requested_extension_minutes: 15,
+        },
+      });
+
+      expect(result.isError).not.toBe(true);
+      expect(requestSessionTimeboxExtension).toHaveBeenCalledWith({
+        sessionId: "session-1",
+        requestedExtensionMinutes: 15,
+      });
+      const text = (result.content as Array<{ type: string; text: string }>)[0].text;
+      const payload = JSON.parse(text);
+      expect(payload.ok).toBe(true);
+      expect(payload.request.requestedExtensionMinutes).toBe(15);
+    });
+
+    it("rejects unsupported extension durations", async () => {
+      const client = await createTestClient();
+      const result = await client.callTool({
+        name: "headsdown_session_timebox",
+        arguments: {
+          session_id: "session-1",
+          requested_extension_minutes: 45,
+        },
+      });
+
+      expect(result.isError).toBe(true);
+      const text = (result.content as Array<{ type: string; text: string }>)[0].text;
+      expect(text).toContain("15 or 30");
     });
   });
 
@@ -1550,7 +1620,7 @@ describe("Plugin structure", () => {
       expect(content).toContain("HeadsDown progress command warning");
       expect(content).toContain("attentionWindowClosing");
       expect(content).toContain("additionalContext");
-      expect(content).toContain("/headsdown:extend");
+      expect(content).toContain("session timebox prompt");
       expect(content).toContain("/headsdown:wrap");
       expect(content).toContain(
         "Do not autonomously call headsdown_apply_action with action_key pause_and_summarize",
@@ -1626,15 +1696,17 @@ describe("Plugin structure", () => {
   });
 
   describe("commands/extend.md and commands/wrap.md", () => {
-    it("define explicit extend and wrap action flows", async () => {
+    it("define explicit session extension and wrap action flows", async () => {
       const extendPath = join(import.meta.dirname, "..", "commands", "extend.md");
       const wrapPath = join(import.meta.dirname, "..", "commands", "wrap.md");
       const extendContent = await readFile(extendPath, "utf-8");
       const wrapContent = await readFile(wrapPath, "utf-8");
 
-      expect(extendContent).toContain("allow_for_duration");
+      expect(extendContent).toContain("headsdown_session_timebox");
       expect(extendContent).toContain("15");
+      expect(extendContent).toContain("30");
       expect(extendContent).toContain("$ARGUMENTS");
+      expect(extendContent).not.toContain("allow_for_duration");
       expect(wrapContent).toContain("pause_and_summarize");
       expect(wrapContent).toContain("privacy-safe handoff");
       expect(wrapContent).toContain("Only run this action when the user explicitly invokes");
@@ -1654,7 +1726,7 @@ describe("Plugin structure", () => {
       expect(monitors).toBeInstanceOf(Array);
       expect(monitors[0].command).toContain("attention-window-monitor.sh");
       expect(script).toContain("attention_window_closing");
-      expect(script).toContain("/headsdown:extend");
+      expect(script).toContain("Session timebox closing");
       expect(script).toContain("/headsdown:wrap");
       expect(script).toContain("deadlineAt");
       expect(script).toContain("thresholdMinutes");

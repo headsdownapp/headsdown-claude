@@ -26,6 +26,7 @@ import {
   isWithinWarningWindow,
   resolveEffectiveAttentionWindow,
 } from "./time-box.js";
+import { resolveSessionTimeboxPrompt } from "./session-timebox.js";
 import {
   buildReportProgressResponse,
   buildReportProgressUnavailableResponse,
@@ -115,6 +116,14 @@ async function status() {
     !!effectiveAttentionWindow &&
     (currentRun.callKey === "attention_window_closing" ||
       isWithinWarningWindow(effectiveAttentionWindow));
+  const sessionTimeboxPrompt = resolveSessionTimeboxPrompt({
+    sessionSummaries: overview?.sessionSummaries ?? null,
+    currentSessionId: process.env.CLAUDE_SESSION_ID,
+    thresholdMinutes:
+      effectiveAttentionWindow?.thresholdMinutes ??
+      availability?.wrapUpGuidance?.thresholdMinutes ??
+      null,
+  });
 
   console.log(
     JSON.stringify(
@@ -129,6 +138,7 @@ async function status() {
         timeBoxError: timeBoxLoad.error,
         attentionWindowClosing,
         effectiveAttentionWindow,
+        sessionTimeboxPrompt,
         summary:
           contract && availability
             ? formatSummary(contract, availability, renderedHeadsDownCall?.title)
@@ -594,6 +604,7 @@ async function reportProgress() {
           overview,
           wrapUpGuidance,
           timeBox: timeBoxLoad.state,
+          currentSessionId: process.env.CLAUDE_SESSION_ID,
         }),
         ...(timeBoxLoad.error ? { timeBoxError: timeBoxLoad.error } : {}),
         ...(availabilityError ? { availabilityError } : {}),
@@ -612,6 +623,7 @@ async function reportProgress() {
           details: safeErrorMessage(error),
           activeRun,
           timeBox: timeBoxLoad.state,
+          currentSessionId: process.env.CLAUDE_SESSION_ID,
         }),
         ...(timeBoxLoad.error ? { timeBoxError: timeBoxLoad.error } : {}),
       }),

@@ -23,7 +23,7 @@ If parsing fails, show the CLI error and tell the user to use one of the example
 A time-box is different from `/headsdown:extend` and `/headsdown:wrap`:
 
 - `/headsdown:timebox` changes the local warning deadline for this Claude Code session.
-- `/headsdown:extend` asks HeadsDown to extend an active window-closing run when the user explicitly wants more time.
+- `/headsdown:extend` asks HeadsDown to request more time for an active hosted session timebox when the user explicitly wants more time.
 - `/headsdown:wrap` is user-elected and saves a handoff. Never auto-trigger it because a time-box expired.
 
 User provided: $ARGUMENTS

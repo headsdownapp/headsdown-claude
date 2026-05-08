@@ -73,6 +73,11 @@ while true; do
   remaining_minutes=$(echo "$status_json" | jq -r '.effectiveAttentionWindow.remainingMinutes // .availability.wrapUpGuidance.remainingMinutes // empty' 2>/dev/null || echo "")
   hints=$(echo "$status_json" | jq -r '(.effectiveAttentionWindow.hints // .availability.wrapUpGuidance.hints // []) | map(select(type == "string" and length > 0)) | join("; ")' 2>/dev/null || echo "")
   effective_source=$(echo "$status_json" | jq -r '.effectiveAttentionWindow.source // empty' 2>/dev/null || echo "")
+  session_timebox_active=$(echo "$status_json" | jq -r 'if .sessionTimeboxPrompt.active == true then "true" else "false" end' 2>/dev/null || echo "false")
+  session_timebox_fingerprint=$(echo "$status_json" | jq -r '.sessionTimeboxPrompt.fingerprint // empty' 2>/dev/null || echo "")
+  session_timebox_session_id=$(echo "$status_json" | jq -r '.sessionTimeboxPrompt.sessionId // empty' 2>/dev/null || echo "")
+  session_timebox_remaining=$(echo "$status_json" | jq -r '.sessionTimeboxPrompt.remainingMinutes // empty' 2>/dev/null || echo "")
+  session_timebox_threshold=$(echo "$status_json" | jq -r '.sessionTimeboxPrompt.thresholdMinutes // empty' 2>/dev/null || echo "")
   resolved_attention_window_closing=$(echo "$status_json" | jq -r 'if has("attentionWindowClosing") then (.attentionWindowClosing | tostring) else "" end' 2>/dev/null || echo "")
   should_warn="false"
 
@@ -88,7 +93,21 @@ while true; do
     fi
   fi
 
-  if [ "$should_warn" = "true" ]; then
+  if [ "$session_timebox_active" = "true" ] && [ -n "$session_timebox_fingerprint" ]; then
+    fingerprint="session-timebox:${session_timebox_fingerprint}"
+    if [ "$fingerprint" != "$last_fingerprint" ]; then
+      notice="[HeadsDown] Session timebox closing. Ask the user whether to request 15 more minutes, request 30 more minutes, or wrap up. If they choose more time, call headsdown_session_timebox with only session_id=${session_timebox_session_id} and the requested minute count."
+      if [ -n "$session_timebox_remaining" ]; then
+        notice="$notice Remaining minutes: ${session_timebox_remaining}."
+      fi
+      if [ -n "$session_timebox_threshold" ]; then
+        notice="$notice Warning threshold minutes: ${session_timebox_threshold}."
+      fi
+      echo "$notice"
+      last_fingerprint="$fingerprint"
+      printf '%s' "$last_fingerprint" > "$STATE_FILE"
+    fi
+  elif [ "$should_warn" = "true" ]; then
     # Fingerprint excludes remaining_minutes on purpose: it ticks down every
     # poll, and including it would re-emit the warning every minute. We want
     # one notice per (deadline, threshold, source) regime; if the user extends
@@ -98,7 +117,7 @@ while true; do
       if [ "$effective_source" = "time_box" ] && [ "$normalized_key" != "attention_window_closing" ]; then
         notice="[HeadsDown] Box deadline near. Keep scope tight; the box will not stop work automatically. Use /headsdown:timebox clear to clear it or /headsdown:timebox <duration> to replace it."
       else
-        notice="[HeadsDown] Window closing. Use /headsdown:extend to request more time or /headsdown:wrap to pause and summarize."
+        notice="[HeadsDown] Window closing. Use /headsdown:wrap to pause and summarize if you want to stop here. Session timebox extension requests are handled by the session timebox prompt."
         if [ "$effective_source" = "time_box" ]; then
           notice="$notice Active box deadline is driving this warning."
         fi
