@@ -140,6 +140,24 @@ Or ask Claude: "Run headsdown_auth to connect my HeadsDown account"
 
 This starts a Device Flow: you visit a URL, enter a code, and the API key is saved locally at `~/.config/headsdown/credentials.json`.
 
+## Local Referee
+
+Local Referee gives Claude Code an account-optional way to verify a run against a repo-local completion contract and print a privacy-safe review receipt. It runs locally, reads local evidence, and does not contact hosted HeadsDown by default.
+
+Run it from Claude Code:
+
+```text
+/headsdown:referee
+```
+
+You can also pass local evidence as JSON when Claude has already gathered it:
+
+```text
+/headsdown:referee {"validationStatus":"passed","testsRun":true,"gitCommitPresent":true,"outcome":"completed"}
+```
+
+The receipt uses the shared `@headsdown/sdk/referee` format so Claude Code and other HeadsDown clients speak the same review language. Hosted HeadsDown remains additive: sync, standing rules, mobile approval, audit, and outcome learning can be layered on later without changing the local receipt.
+
 ## Why HeadsDown in Claude Code
 
 Claude Code already knows how to write, edit, test, and reason about code. HeadsDown adds the missing runtime context: whether now is a good time to ask, whether the task is still the task you approved, and whether Claude should keep going or package a clean handoff.
@@ -247,6 +265,7 @@ Quick slash commands for direct access:
 - `/headsdown:timebox <duration>` - Declare a session-scoped local deadline like `30m`, `45m`, `1h`, or `1h30m`
 - `/headsdown:timebox status` - Show the active box deadline, remaining time, and warning threshold
 - `/headsdown:timebox clear` - Clear the local box so future warnings use backend-derived attention-window behavior when available
+- `/headsdown:referee [evidence JSON]` - Verify the run locally against a Referee contract and print a privacy-safe receipt without signing in
 - `/headsdown:extend [15|30]` - Request more time for an active hosted session timebox (defaults to 15)
 - `/headsdown:wrap` - Apply `pause_and_summarize` with a privacy-safe handoff for an active window-closing run
 - `/headsdown:wake-up` - Review metadata-only deferred decisions captured during autopilot
