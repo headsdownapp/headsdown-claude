@@ -4,6 +4,7 @@
 
 ### Features
 
+- Added `/headsdown:referee`, an account-optional local Referee command that verifies a run against local evidence and prints a privacy-safe receipt.
 - Added `/headsdown:status`, `/headsdown:auth`, `/headsdown:timebox`, `/headsdown:extend`, `/headsdown:wrap`, and `/headsdown:wake-up` slash commands.
 - Added `headsdown_deferred` MCP tool for reviewing metadata-only deferred decisions captured during autopilot.
 - Added autopilot anti-stuck nudges: the Stop hook records deferred-decision events locally and exits with a nudge so Claude continues without waiting for input.

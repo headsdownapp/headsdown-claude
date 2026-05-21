@@ -4,6 +4,11 @@ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import { createServer } from "./server.js";
 
 async function main() {
+  if (process.argv[2] === "referee") {
+    await import("./cli.js");
+    return;
+  }
+
   const server = createServer();
   const transport = new StdioServerTransport();
   await server.connect(transport);

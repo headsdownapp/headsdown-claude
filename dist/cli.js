@@ -7,7 +7,7 @@ var __require = /* @__PURE__ */ ((x) => typeof require !== "undefined" ? require
 });
 
 // src/cli.ts
-import { readFile as readFile11, writeFile as writeFile10, unlink as unlink3, access as access5 } from "node:fs/promises";
+import { readFile as readFile12, writeFile as writeFile10, unlink as unlink3, access as access5 } from "node:fs/promises";
 import { join as join12, dirname as dirname6 } from "node:path";
 import { homedir as homedir9 } from "node:os";
 import { mkdirSync } from "node:fs";
@@ -742,7 +742,7 @@ var DeviceFlow = class {
   }
 };
 function sleep(ms) {
-  return new Promise((resolve) => setTimeout(resolve, ms));
+  return new Promise((resolve2) => setTimeout(resolve2, ms));
 }
 
 // node_modules/@headsdown/sdk/dist/graphql.js
@@ -855,7 +855,7 @@ function retryDelayFromResponse(response, fallbackMs) {
   return fallbackMs;
 }
 function sleep2(ms) {
-  return new Promise((resolve) => setTimeout(resolve, ms));
+  return new Promise((resolve2) => setTimeout(resolve2, ms));
 }
 function buildHeaders(apiKey, actorContext) {
   const headers = {
@@ -929,19 +929,19 @@ function normalizeEnums(data, parentKey) {
     return data.map((item) => normalizeEnums(item, parentKey));
   if (typeof data !== "object")
     return data;
-  const result = {};
+  const result2 = {};
   for (const [key, value] of Object.entries(data)) {
     if (isEnumField(key, parentKey) && typeof value === "string") {
-      result[key] = normalizeEnumValue(value);
+      result2[key] = normalizeEnumValue(value);
     } else if (isEnumField(key, parentKey) && Array.isArray(value)) {
-      result[key] = value.map((item) => typeof item === "string" ? normalizeEnumValue(item) : item);
+      result2[key] = value.map((item) => typeof item === "string" ? normalizeEnumValue(item) : item);
     } else if (typeof value === "object" && value !== null) {
-      result[key] = normalizeEnums(value, key);
+      result2[key] = normalizeEnums(value, key);
     } else {
-      result[key] = value;
+      result2[key] = value;
     }
   }
-  return result;
+  return result2;
 }
 function isEnumField(key, parentKey) {
   if (key === "source")
@@ -2853,12 +2853,12 @@ function resolveApiKey(explicit) {
   return process.env.HEADSDOWN_API_KEY || void 0;
 }
 function stripUndefined2(obj) {
-  const result = {};
+  const result2 = {};
   for (const [key, value] of Object.entries(obj)) {
     if (value !== void 0)
-      result[key] = value;
+      result2[key] = value;
   }
-  return result;
+  return result2;
 }
 function randomHex2(bytes) {
   try {
@@ -3170,6 +3170,282 @@ function describeExecutionDirective(input) {
   };
 }
 
+// node_modules/@headsdown/sdk/dist/referee/contract.js
+var LOCAL_REFEREE_CONTRACT_PATH = ".headsdown/referee.json";
+var CHECK_TYPES = /* @__PURE__ */ new Set([
+  "validation_status",
+  "max_files_touched",
+  "max_tool_calls",
+  "require_tests",
+  "network_required",
+  "outcome",
+  "git_commit_present"
+]);
+var LocalRefereeContractError = class extends Error {
+  constructor(message) {
+    super(message);
+    this.name = "LocalRefereeContractError";
+  }
+};
+function asRecord(value) {
+  return value !== null && typeof value === "object" && !Array.isArray(value) ? value : null;
+}
+function parseCheckType(value, index) {
+  if (typeof value !== "string")
+    throw new LocalRefereeContractError(`check ${index + 1} is missing a string type.`);
+  const normalized = value.trim().toLowerCase().replace(/[\s-]+/g, "_");
+  if (!CHECK_TYPES.has(normalized))
+    throw new LocalRefereeContractError(`check ${index + 1} has unsupported type.`);
+  return normalized;
+}
+function parseMax(value, index, field) {
+  if (typeof value !== "number" || !Number.isSafeInteger(value) || value < 0)
+    throw new LocalRefereeContractError(`check ${index + 1} requires a non-negative integer ${field}.`);
+  return value;
+}
+function parseRequiredString(value, index, allowed) {
+  if (typeof value !== "string")
+    throw new LocalRefereeContractError(`check ${index + 1} requires a string required value.`);
+  const normalized = value.trim().toLowerCase().replace(/[\s-]+/g, "_");
+  if (!allowed.includes(normalized))
+    throw new LocalRefereeContractError(`check ${index + 1} has unsupported required value.`);
+  return normalized;
+}
+function parseRequiredBoolean(value, index) {
+  if (typeof value !== "boolean")
+    throw new LocalRefereeContractError(`check ${index + 1} requires a boolean required value.`);
+  return value;
+}
+function parseCheck(value, index) {
+  const record = asRecord(value);
+  if (!record)
+    throw new LocalRefereeContractError(`check ${index + 1} must be an object.`);
+  const type = parseCheckType(record.type, index);
+  switch (type) {
+    case "validation_status":
+      return {
+        type,
+        required: parseRequiredString(record.required ?? "passed", index, [
+          "passed",
+          "failed",
+          "unknown"
+        ])
+      };
+    case "max_files_touched":
+    case "max_tool_calls":
+      return { type, max: parseMax(record.max, index, "max") };
+    case "require_tests":
+    case "git_commit_present":
+      return { type, required: parseRequiredBoolean(record.required ?? true, index) };
+    case "network_required":
+      return { type, required: parseRequiredBoolean(record.required, index) };
+    case "outcome":
+      return {
+        type,
+        required: parseRequiredString(record.required ?? "completed", index, [
+          "completed",
+          "partially_completed",
+          "blocked",
+          "unknown"
+        ])
+      };
+  }
+}
+function parseLocalRefereeContract(value) {
+  const record = asRecord(value);
+  if (!record)
+    throw new LocalRefereeContractError("Local Referee contract must be a JSON object.");
+  if (record.version !== 1)
+    throw new LocalRefereeContractError("Local Referee contract version must be 1.");
+  if (!Array.isArray(record.checks) || record.checks.length === 0)
+    throw new LocalRefereeContractError("Local Referee contract requires at least one check.");
+  return { version: 1, checks: record.checks.map((check, index) => parseCheck(check, index)) };
+}
+function parseLocalRefereeContractJson(contents) {
+  let parsed;
+  try {
+    parsed = JSON.parse(contents);
+  } catch {
+    throw new LocalRefereeContractError("Local Referee contract must be valid JSON.");
+  }
+  return parseLocalRefereeContract(parsed);
+}
+
+// node_modules/@headsdown/sdk/dist/referee/evidence.js
+function normalizeOptionalNonNegativeInteger(value) {
+  if (value === void 0 || value === null || value === "")
+    return null;
+  if (typeof value === "number" && Number.isSafeInteger(value) && value >= 0)
+    return value;
+  if (typeof value === "string" && value.trim().length > 0) {
+    const parsed = Number(value);
+    if (Number.isSafeInteger(parsed) && parsed >= 0)
+      return parsed;
+  }
+  return null;
+}
+function normalizeOptionalNonNegativeNumber(value) {
+  if (value === void 0 || value === null || value === "")
+    return null;
+  if (typeof value === "number" && Number.isFinite(value) && value >= 0)
+    return value;
+  if (typeof value === "string" && value.trim().length > 0) {
+    const parsed = Number(value);
+    if (Number.isFinite(parsed) && parsed >= 0)
+      return parsed;
+  }
+  return null;
+}
+function normalizeCountEvidence(value) {
+  const count = normalizeOptionalNonNegativeInteger(value);
+  return count === null ? { count: 0, known: false } : { count, known: true };
+}
+function normalizeOptionalMinutes(value) {
+  return normalizeOptionalNonNegativeNumber(value);
+}
+function normalizeBoolean(value, fallback = false) {
+  if (typeof value === "boolean")
+    return value;
+  if (typeof value === "number" && Number.isFinite(value)) {
+    if (value === 1)
+      return true;
+    if (value === 0)
+      return false;
+    return fallback;
+  }
+  if (typeof value === "string") {
+    const normalized = value.trim().toLowerCase();
+    if (["true", "yes", "y", "1", "passed", "run", "present", "committed"].includes(normalized))
+      return true;
+    if (["false", "no", "n", "0", "failed", "none", "missing", "absent"].includes(normalized))
+      return false;
+  }
+  return fallback;
+}
+function normalizeValidationStatus(value) {
+  if (typeof value !== "string")
+    return "unknown";
+  const normalized = value.trim().toLowerCase().replace(/[\s-]+/g, "_");
+  if (["passed", "pass", "success", "succeeded", "ok", "green"].includes(normalized))
+    return "passed";
+  if (["failed", "fail", "failure", "error", "red"].includes(normalized))
+    return "failed";
+  return "unknown";
+}
+function normalizeOutcome(value) {
+  if (typeof value !== "string")
+    return "unknown";
+  const normalized = value.trim().toLowerCase().replace(/[\s-]+/g, "_");
+  if (["completed", "complete", "succeeded", "success"].includes(normalized))
+    return "completed";
+  if (["partially_completed", "partial", "paused", "needs_review"].includes(normalized))
+    return "partially_completed";
+  if (["blocked", "deferred", "stopped"].includes(normalized))
+    return "blocked";
+  return "unknown";
+}
+function bucketCount(count) {
+  if (!Number.isSafeInteger(count) || count < 0)
+    return "unknown";
+  if (count === 0)
+    return "0";
+  if (count <= 2)
+    return "1_to_2";
+  if (count <= 5)
+    return "3_to_5";
+  if (count <= 10)
+    return "6_to_10";
+  return "over_10";
+}
+function bucketMinutes(minutes) {
+  if (minutes === null || !Number.isFinite(minutes) || minutes < 0)
+    return "unknown";
+  if (minutes < 15)
+    return "under_15";
+  if (minutes <= 30)
+    return "15_to_30";
+  if (minutes <= 60)
+    return "30_to_60";
+  if (minutes <= 120)
+    return "60_to_120";
+  return "over_120";
+}
+function normalizeLocalRefereeEvidence(raw = {}) {
+  const filesTouched = normalizeCountEvidence(raw.filesTouched);
+  const toolCalls = normalizeCountEvidence(raw.toolCalls);
+  const elapsedMinutes = normalizeOptionalMinutes(raw.elapsedMinutes);
+  return {
+    filesTouched: filesTouched.count,
+    filesTouchedKnown: filesTouched.known,
+    filesTouchedBucket: filesTouched.known ? bucketCount(filesTouched.count) : "unknown",
+    toolCalls: toolCalls.count,
+    toolCallsKnown: toolCalls.known,
+    toolCallsBucket: toolCalls.known ? bucketCount(toolCalls.count) : "unknown",
+    validationStatus: normalizeValidationStatus(raw.validationStatus),
+    testsRun: normalizeBoolean(raw.testsRun),
+    networkRequired: normalizeBoolean(raw.networkRequired),
+    gitCommitPresent: normalizeBoolean(raw.gitCommitPresent),
+    elapsedMinutes,
+    elapsedMinutesBucket: bucketMinutes(elapsedMinutes),
+    manualReviewRoundTripsAvoided: normalizeOptionalNonNegativeInteger(raw.manualReviewRoundTripsAvoided),
+    outcome: normalizeOutcome(raw.outcome)
+  };
+}
+
+// node_modules/@headsdown/sdk/dist/referee/evaluate.js
+function result(index, check, passed, reasonCode) {
+  return {
+    id: `check_${index + 1}`,
+    type: check.type,
+    status: passed ? "passed" : "failed",
+    reasonCode
+  };
+}
+function evaluateCheck(check, evidence, index) {
+  switch (check.type) {
+    case "validation_status": {
+      const required = String(check.required ?? "passed");
+      return result(index, check, evidence.validationStatus === required, evidence.validationStatus === required ? "validation_status_matched" : "validation_status_mismatch");
+    }
+    case "max_files_touched": {
+      const max = check.max ?? 0;
+      if (!evidence.filesTouchedKnown)
+        return result(index, check, false, "files_touched_unknown");
+      return result(index, check, evidence.filesTouched <= max, evidence.filesTouched <= max ? "files_within_limit" : "files_over_limit");
+    }
+    case "max_tool_calls": {
+      const max = check.max ?? 0;
+      if (!evidence.toolCallsKnown)
+        return result(index, check, false, "tool_calls_unknown");
+      return result(index, check, evidence.toolCalls <= max, evidence.toolCalls <= max ? "tool_calls_within_limit" : "tool_calls_over_limit");
+    }
+    case "require_tests": {
+      const required = check.required === true;
+      return result(index, check, evidence.testsRun === required, evidence.testsRun === required ? "tests_requirement_matched" : "tests_requirement_mismatch");
+    }
+    case "network_required": {
+      const required = check.required === true;
+      return result(index, check, evidence.networkRequired === required, evidence.networkRequired === required ? "network_requirement_matched" : "network_requirement_mismatch");
+    }
+    case "outcome": {
+      const required = String(check.required ?? "completed");
+      return result(index, check, evidence.outcome === required, evidence.outcome === required ? "outcome_matched" : "outcome_mismatch");
+    }
+    case "git_commit_present": {
+      const required = check.required === true;
+      return result(index, check, evidence.gitCommitPresent === required, evidence.gitCommitPresent === required ? "git_commit_requirement_matched" : "git_commit_requirement_mismatch");
+    }
+  }
+}
+function evaluateLocalRefereeContract(contract, evidence) {
+  const normalizedContract = parseLocalRefereeContract(contract);
+  const checks = normalizedContract.checks.map((check, index) => evaluateCheck(check, evidence, index));
+  return {
+    verdict: checks.every((check) => check.status === "passed") ? "passed" : "needs_review",
+    checks
+  };
+}
+
 // node_modules/@headsdown/sdk/dist/referee/labels.js
 var LOCAL_REFEREE_CHECK_LABELS = {
   validation_status: "Validation completed",
@@ -3180,9 +3456,270 @@ var LOCAL_REFEREE_CHECK_LABELS = {
   outcome: "Definition of done satisfied",
   git_commit_present: "Commit present"
 };
+function labelLocalRefereeCheckType(type) {
+  const label = LOCAL_REFEREE_CHECK_LABELS[type];
+  if (!label)
+    throw new Error(`Unsupported Local Referee check type: ${String(type)}.`);
+  return label;
+}
 
 // node_modules/@headsdown/sdk/dist/referee/receipt.js
+import { createHash } from "node:crypto";
+function buildLocalRefereeContractRef(contract) {
+  const normalized = parseLocalRefereeContract(contract);
+  const digest = createHash("sha256").update(JSON.stringify(normalized)).digest("hex").slice(0, 16);
+  return `contract_${digest}`;
+}
+var RECEIPT_KEYS = /* @__PURE__ */ new Set([
+  "schemaVersion",
+  "generatedAt",
+  "contractRef",
+  "verdict",
+  "evidence",
+  "checks"
+]);
+var RECEIPT_EVIDENCE_KEYS = /* @__PURE__ */ new Set([
+  "filesTouchedBucket",
+  "toolCallsBucket",
+  "validationStatus",
+  "testsRun",
+  "networkRequired",
+  "gitCommitPresent",
+  "elapsedMinutesBucket",
+  "manualReviewRoundTripsAvoided",
+  "outcome"
+]);
+var RECEIPT_CHECK_KEYS = /* @__PURE__ */ new Set(["id", "type", "status", "reasonCode"]);
+var RECEIPT_VERDICTS = /* @__PURE__ */ new Set(["passed", "needs_review"]);
+var RECEIPT_STATUSES = /* @__PURE__ */ new Set(["passed", "failed"]);
 var RECEIPT_CHECK_TYPES = new Set(Object.keys(LOCAL_REFEREE_CHECK_LABELS));
+var RECEIPT_VALIDATION_STATUSES = /* @__PURE__ */ new Set(["passed", "failed", "unknown"]);
+var RECEIPT_OUTCOMES = /* @__PURE__ */ new Set(["completed", "partially_completed", "blocked", "unknown"]);
+var RECEIPT_COUNT_BUCKETS = /* @__PURE__ */ new Set(["0", "1_to_2", "3_to_5", "6_to_10", "over_10", "unknown"]);
+var RECEIPT_REASON_CODES = {
+  validation_status: {
+    passed: /* @__PURE__ */ new Set(["validation_status_matched"]),
+    failed: /* @__PURE__ */ new Set(["validation_status_mismatch"])
+  },
+  max_files_touched: {
+    passed: /* @__PURE__ */ new Set(["files_within_limit"]),
+    failed: /* @__PURE__ */ new Set(["files_over_limit", "files_touched_unknown"])
+  },
+  max_tool_calls: {
+    passed: /* @__PURE__ */ new Set(["tool_calls_within_limit"]),
+    failed: /* @__PURE__ */ new Set(["tool_calls_over_limit", "tool_calls_unknown"])
+  },
+  require_tests: {
+    passed: /* @__PURE__ */ new Set(["tests_requirement_matched"]),
+    failed: /* @__PURE__ */ new Set(["tests_requirement_mismatch"])
+  },
+  network_required: {
+    passed: /* @__PURE__ */ new Set(["network_requirement_matched"]),
+    failed: /* @__PURE__ */ new Set(["network_requirement_mismatch"])
+  },
+  outcome: {
+    passed: /* @__PURE__ */ new Set(["outcome_matched"]),
+    failed: /* @__PURE__ */ new Set(["outcome_mismatch"])
+  },
+  git_commit_present: {
+    passed: /* @__PURE__ */ new Set(["git_commit_requirement_matched"]),
+    failed: /* @__PURE__ */ new Set(["git_commit_requirement_mismatch"])
+  }
+};
+var RECEIPT_TIME_BUCKETS = /* @__PURE__ */ new Set([
+  "under_15",
+  "15_to_30",
+  "30_to_60",
+  "60_to_120",
+  "over_120",
+  "unknown"
+]);
+var RECEIPT_SAFE_TOKEN_PATTERN = /^[A-Za-z0-9_.:-]{1,256}$/;
+function asRecord2(value) {
+  return value !== null && typeof value === "object" && !Array.isArray(value) ? value : null;
+}
+function assertExactKeys(record, allowed, path) {
+  for (const key of Object.keys(record)) {
+    if (!allowed.has(key))
+      throw new Error(`Local Referee receipt contains unsupported field '${key}' at ${path}.`);
+  }
+}
+function assertSafeToken(value, path) {
+  if (typeof value !== "string" || !RECEIPT_SAFE_TOKEN_PATTERN.test(value) || value.includes("://") || value.toLowerCase().includes(".git")) {
+    throw new Error(`Local Referee receipt requires a safe token at ${path}.`);
+  }
+}
+function assertIsoTimestamp(value, path) {
+  assertSafeToken(value, path);
+  const normalizedValue = value.includes(".") ? value : value.replace("Z", ".000Z");
+  const parsed = new Date(value);
+  if (!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{3})?Z$/.test(value) || Number.isNaN(parsed.getTime()) || parsed.toISOString() !== normalizedValue) {
+    throw new Error(`Local Referee receipt requires an ISO timestamp at ${path}.`);
+  }
+}
+function assertContractRef(value, path) {
+  assertSafeToken(value, path);
+  if (!/^contract_[a-f0-9]{16}$/.test(value)) {
+    throw new Error(`Local Referee receipt requires a contract ref at ${path}.`);
+  }
+}
+function assertCheckId(value, path) {
+  assertSafeToken(value, path);
+  if (!/^check_\d+$/.test(value)) {
+    throw new Error(`Local Referee receipt requires a check id at ${path}.`);
+  }
+}
+function assertEnum(value, allowed, path) {
+  if (typeof value !== "string" || !allowed.has(value)) {
+    throw new Error(`Local Referee receipt contains unsupported value at ${path}.`);
+  }
+}
+function assertBoolean(value, path) {
+  if (typeof value !== "boolean")
+    throw new Error(`Local Referee receipt requires a boolean at ${path}.`);
+}
+function assertOptionalNonNegativeInteger(value, path) {
+  if (value !== void 0 && (typeof value !== "number" || !Number.isSafeInteger(value) || value < 0)) {
+    throw new Error(`Local Referee receipt requires a non-negative integer at ${path}.`);
+  }
+}
+function assertCheckReasonCode(type, status2, value, path) {
+  assertSafeToken(value, path);
+  if (!RECEIPT_REASON_CODES[type][status2].has(value)) {
+    throw new Error(`Local Referee receipt contains unsupported reason code at ${path}.`);
+  }
+}
+function assertLocalRefereeReceipt(value) {
+  const receipt = asRecord2(value);
+  if (!receipt)
+    throw new Error("Local Referee receipt must be an object.");
+  assertExactKeys(receipt, RECEIPT_KEYS, "receipt");
+  if (receipt.schemaVersion !== 1)
+    throw new Error("Local Referee receipt schemaVersion must be 1.");
+  assertIsoTimestamp(receipt.generatedAt, "receipt.generatedAt");
+  assertContractRef(receipt.contractRef, "receipt.contractRef");
+  assertEnum(receipt.verdict, RECEIPT_VERDICTS, "receipt.verdict");
+  const evidence = asRecord2(receipt.evidence);
+  if (!evidence)
+    throw new Error("Local Referee receipt evidence must be an object.");
+  assertExactKeys(evidence, RECEIPT_EVIDENCE_KEYS, "receipt.evidence");
+  assertEnum(evidence.filesTouchedBucket, RECEIPT_COUNT_BUCKETS, "receipt.evidence.filesTouchedBucket");
+  assertEnum(evidence.toolCallsBucket, RECEIPT_COUNT_BUCKETS, "receipt.evidence.toolCallsBucket");
+  assertEnum(evidence.validationStatus, RECEIPT_VALIDATION_STATUSES, "receipt.evidence.validationStatus");
+  assertBoolean(evidence.testsRun, "receipt.evidence.testsRun");
+  assertBoolean(evidence.networkRequired, "receipt.evidence.networkRequired");
+  if (evidence.gitCommitPresent !== void 0)
+    assertBoolean(evidence.gitCommitPresent, "receipt.evidence.gitCommitPresent");
+  assertEnum(evidence.elapsedMinutesBucket, RECEIPT_TIME_BUCKETS, "receipt.evidence.elapsedMinutesBucket");
+  assertOptionalNonNegativeInteger(evidence.manualReviewRoundTripsAvoided, "receipt.evidence.manualReviewRoundTripsAvoided");
+  assertEnum(evidence.outcome, RECEIPT_OUTCOMES, "receipt.evidence.outcome");
+  if (!Array.isArray(receipt.checks))
+    throw new Error("Local Referee receipt checks must be an array.");
+  if (receipt.checks.length === 0)
+    throw new Error("Local Referee receipt requires at least one check.");
+  let failedCheckCount = 0;
+  let hasGitCommitCheck = false;
+  for (const [index, value2] of receipt.checks.entries()) {
+    const check = asRecord2(value2);
+    if (!check)
+      throw new Error(`Local Referee receipt check ${index + 1} must be an object.`);
+    assertExactKeys(check, RECEIPT_CHECK_KEYS, `receipt.checks[${index}]`);
+    assertCheckId(check.id, `receipt.checks[${index}].id`);
+    if (check.id !== `check_${index + 1}`) {
+      throw new Error(`Local Referee receipt requires sequential check ids at receipt.checks[${index}].id.`);
+    }
+    assertEnum(check.type, RECEIPT_CHECK_TYPES, `receipt.checks[${index}].type`);
+    assertEnum(check.status, RECEIPT_STATUSES, `receipt.checks[${index}].status`);
+    assertCheckReasonCode(check.type, check.status, check.reasonCode, `receipt.checks[${index}].reasonCode`);
+    if (check.status === "failed")
+      failedCheckCount += 1;
+    if (check.type === "git_commit_present")
+      hasGitCommitCheck = true;
+  }
+  if (receipt.verdict === "passed" && failedCheckCount > 0)
+    throw new Error("Local Referee receipt verdict does not match failed checks.");
+  if (receipt.verdict === "needs_review" && failedCheckCount === 0)
+    throw new Error("Local Referee receipt verdict does not match passed checks.");
+  if (hasGitCommitCheck && evidence.gitCommitPresent === void 0)
+    throw new Error("Local Referee receipt gitCommitPresent evidence must match checks.");
+  if (!hasGitCommitCheck && evidence.gitCommitPresent !== void 0)
+    throw new Error("Local Referee receipt gitCommitPresent evidence must match checks.");
+}
+function assertEvaluationMatchesContract(evaluation, contract, evidence) {
+  const expected = evaluateLocalRefereeContract(contract, evidence);
+  if (evaluation.verdict !== expected.verdict || evaluation.checks.length !== expected.checks.length) {
+    throw new Error("Local Referee evaluation does not match contract checks.");
+  }
+  for (const [index, check] of evaluation.checks.entries()) {
+    const expectedCheck = expected.checks[index];
+    if (!expectedCheck || check.id !== expectedCheck.id || check.type !== expectedCheck.type || check.status !== expectedCheck.status || check.reasonCode !== expectedCheck.reasonCode) {
+      throw new Error("Local Referee evaluation does not match contract checks.");
+    }
+  }
+}
+function buildLocalRefereeReceipt(input) {
+  const contract = parseLocalRefereeContract(input.contract);
+  assertEvaluationMatchesContract(input.evaluation, contract, input.evidence);
+  const hasGitCommitCheck = contract.checks.some((check) => check.type === "git_commit_present");
+  const manualReviewRoundTripsAvoided = input.evidence.manualReviewRoundTripsAvoided;
+  const receipt = {
+    schemaVersion: 1,
+    generatedAt: (input.now ?? /* @__PURE__ */ new Date()).toISOString(),
+    contractRef: buildLocalRefereeContractRef(contract),
+    verdict: input.evaluation.verdict,
+    evidence: {
+      filesTouchedBucket: input.evidence.filesTouchedBucket,
+      toolCallsBucket: input.evidence.toolCallsBucket,
+      validationStatus: input.evidence.validationStatus,
+      testsRun: input.evidence.testsRun,
+      networkRequired: input.evidence.networkRequired,
+      ...hasGitCommitCheck ? { gitCommitPresent: input.evidence.gitCommitPresent } : {},
+      elapsedMinutesBucket: input.evidence.elapsedMinutesBucket,
+      ...manualReviewRoundTripsAvoided === null ? {} : { manualReviewRoundTripsAvoided },
+      outcome: input.evidence.outcome
+    },
+    checks: input.evaluation.checks
+  };
+  assertLocalRefereeReceipt(receipt);
+  return receipt;
+}
+var MARKDOWN_CHECK_ORDER = /* @__PURE__ */ new Map([
+  ["outcome", 0],
+  ["validation_status", 1],
+  ["require_tests", 1],
+  ["git_commit_present", 2],
+  ["max_files_touched", 3],
+  ["max_tool_calls", 3],
+  ["network_required", 4]
+]);
+function markdownCheckLines(receipt) {
+  const lines = [];
+  for (const check of receipt.checks) {
+    const label = labelLocalRefereeCheckType(check.type);
+    const order = MARKDOWN_CHECK_ORDER.get(check.type) ?? Number.MAX_SAFE_INTEGER;
+    const existing = lines.find((line) => line.label === label);
+    if (!existing) {
+      lines.push({ label, status: check.status, order });
+      continue;
+    }
+    existing.order = Math.min(existing.order, order);
+    if (check.status === "failed")
+      existing.status = "failed";
+  }
+  return lines.sort((left, right) => left.order - right.order);
+}
+function renderLocalRefereeReceiptMarkdown(receipt) {
+  assertLocalRefereeReceipt(receipt);
+  const lines = ["### HeadsDown Referee", ""];
+  for (const check of markdownCheckLines(receipt)) {
+    lines.push(`${check.status === "passed" ? "\u2713" : "\u21A9"} ${check.label}`);
+  }
+  if (receipt.evidence.manualReviewRoundTripsAvoided !== void 0) {
+    lines.push(`\u21A9 Manual review round trips avoided: ${receipt.evidence.manualReviewRoundTripsAvoided}`);
+  }
+  lines.push("\u{1F512} Verified locally");
+  return lines.join("\n");
+}
 
 // node_modules/@headsdown/sdk/dist/referee/outcome-payload.js
 var PROHIBITED_KEYS2 = /* @__PURE__ */ new Set([
@@ -4173,32 +4710,32 @@ function assertLocalSessionSummary(value) {
   if (summary2.version !== LOCAL_SESSION_SUMMARY_VERSION) {
     throw new ValidationError(`localSessionSummary.version must be ${LOCAL_SESSION_SUMMARY_VERSION}.`, "version");
   }
-  assertSafeToken(summary2.sessionId, "sessionId");
-  assertIsoTimestamp(summary2.generatedAt, "generatedAt");
-  assertBoolean(summary2.stale, "stale");
+  assertSafeToken2(summary2.sessionId, "sessionId");
+  assertIsoTimestamp2(summary2.generatedAt, "generatedAt");
+  assertBoolean2(summary2.stale, "stale");
   assertCount(summary2.toolCallCount, "toolCallCount");
   assertCount(summary2.fileChangeCount, "fileChangeCount");
   assertCount(summary2.deferredDecisionCount, "deferredDecisionCount");
-  assertBoolean(summary2.continuationArtifactAvailable, "continuationArtifactAvailable");
-  assertBoolean(summary2.validationLocallyPassed, "validationLocallyPassed");
+  assertBoolean2(summary2.continuationArtifactAvailable, "continuationArtifactAvailable");
+  assertBoolean2(summary2.validationLocallyPassed, "validationLocallyPassed");
   if (summary2.approvedProposalRef !== null) {
-    assertSafeToken(summary2.approvedProposalRef, "approvedProposalRef");
+    assertSafeToken2(summary2.approvedProposalRef, "approvedProposalRef");
   }
   if (typeof summary2.outcomeCategory !== "string" || !LOCAL_SESSION_SUMMARY_OUTCOME_CATEGORIES.includes(summary2.outcomeCategory)) {
     throw new ValidationError("localSessionSummary.outcomeCategory must be a supported enum value.", "outcomeCategory");
   }
 }
-function assertSafeToken(value, field) {
+function assertSafeToken2(value, field) {
   if (typeof value !== "string" || value.length === 0 || !SAFE_TOKEN_REGEX.test(value)) {
     throw new ValidationError(`${field} must be a 1-256 character token using only letters, numbers, _, ., :, or -.`, field);
   }
 }
-function assertIsoTimestamp(value, field) {
+function assertIsoTimestamp2(value, field) {
   if (typeof value !== "string" || !ISO_DATE_TIME_REGEX.test(value) || Number.isNaN(Date.parse(value))) {
     throw new ValidationError(`${field} must be a valid RFC3339 date-time timestamp.`, field);
   }
 }
-function assertBoolean(value, field) {
+function assertBoolean2(value, field) {
   if (typeof value !== "boolean") {
     throw new ValidationError(`${field} must be a boolean.`, field);
   }
@@ -4930,8 +5467,8 @@ function normalizeFailureCategory(value) {
 // src/agent-run-reporter.ts
 async function reportAgentRunEventCompat(client, input) {
   try {
-    const result = await client.reportAgentRunEvent(buildSdkEventInput(input));
-    return isSuccessfulReportResult(result);
+    const result2 = await client.reportAgentRunEvent(buildSdkEventInput(input));
+    return isSuccessfulReportResult(result2);
   } catch {
     return false;
   }
@@ -4958,9 +5495,9 @@ function proposalRefFor(input) {
   if (input.eventType.startsWith("integration.")) return void 0;
   return input.runId;
 }
-function isSuccessfulReportResult(result) {
-  if (!result || typeof result !== "object") return true;
-  const record = result;
+function isSuccessfulReportResult(result2) {
+  if (!result2 || typeof result2 !== "object") return true;
+  const record = result2;
   if (!("ok" in record) && !("error" in record)) return true;
   return record.ok === true && (record.error === null || record.error === void 0);
 }
@@ -5123,7 +5660,7 @@ import { join as join8 } from "node:path";
 import { homedir as homedir7 } from "node:os";
 
 // src/autopilot/deferral.ts
-import { createHash, randomBytes } from "node:crypto";
+import { createHash as createHash2, randomBytes } from "node:crypto";
 import { access as access2, readFile as readFile6 } from "node:fs/promises";
 import { join as join6 } from "node:path";
 import { homedir as homedir5 } from "node:os";
@@ -5261,15 +5798,15 @@ function normalizeAutopilotDeferralConfig(value) {
 function safeSummaryToken(value) {
   const trimmed = value.trim();
   if (!trimmed) return "h_empty";
-  return `h_${createHash("sha256").update(trimmed).digest("hex").slice(0, 40)}`;
+  return `h_${createHash2("sha256").update(trimmed).digest("hex").slice(0, 40)}`;
 }
 function deferralKey(input) {
-  const messageHash = createHash("sha1").update(input.message.slice(0, 2e3)).digest("hex");
-  const localHash = createHash("sha1").update(`${input.turnIndex}:${input.patternKey}:${messageHash}`).digest("hex");
+  const messageHash = createHash2("sha1").update(input.message.slice(0, 2e3)).digest("hex");
+  const localHash = createHash2("sha1").update(`${input.turnIndex}:${input.patternKey}:${messageHash}`).digest("hex");
   return `${safeSummaryToken(input.runId)}:${localHash}`;
 }
 function decisionIdForDeferralKey(key) {
-  return `decision_${createHash("sha1").update(key).digest("hex").slice(0, 32)}`;
+  return `decision_${createHash2("sha1").update(key).digest("hex").slice(0, 32)}`;
 }
 function buildSummaryInputFromRunState(input) {
   return {
@@ -5609,10 +6146,10 @@ async function runDetectDeferralFromStdin() {
   const raw = await readStdin();
   if (!raw.trim()) return { recorded: false, skippedReason: "empty_input" };
   try {
-    const result = await handleDetectDeferral(JSON.parse(raw));
-    if (result.stderr) console.error(result.stderr);
-    if (result.exitCode && result.exitCode !== 0) process.exit(result.exitCode);
-    return result;
+    const result2 = await handleDetectDeferral(JSON.parse(raw));
+    if (result2.stderr) console.error(result2.stderr);
+    if (result2.exitCode && result2.exitCode !== 0) process.exit(result2.exitCode);
+    return result2;
   } catch {
     return { recorded: false, skippedReason: "invalid_input" };
   }
@@ -5846,9 +6383,9 @@ async function runInterceptAskFromStdin() {
   const raw = await readStdin2();
   if (!raw.trim()) return { denied: false, recorded: false, skippedReason: "empty_input" };
   try {
-    const result = await handleInterceptAsk(JSON.parse(raw));
-    if (result.output) console.log(JSON.stringify(result.output));
-    return result;
+    const result2 = await handleInterceptAsk(JSON.parse(raw));
+    if (result2.output) console.log(JSON.stringify(result2.output));
+    return result2;
   } catch {
     return { denied: false, recorded: false, skippedReason: "invalid_input" };
   }
@@ -6004,11 +6541,11 @@ async function readStdin2() {
 async function runAutopilotPromptFromStdin(args = process.argv.slice(4)) {
   const raw = await readStdin3();
   const input = parseHookInput(raw);
-  const result = await handleAutopilotPrompt(input, {
+  const result2 = await handleAutopilotPrompt(input, {
     asSessionContext: args.includes("--as-session-context")
   });
-  if (result.output) {
-    process.stdout.write(`${JSON.stringify(result.output)}
+  if (result2.output) {
+    process.stdout.write(`${JSON.stringify(result2.output)}
 `);
   }
 }
@@ -6211,9 +6748,9 @@ function numberField(value) {
 // src/autopilot/wake-up-handler.ts
 async function runWakeUpFromStdin() {
   await readStdin4();
-  const result = await handleWakeUp();
-  if (result.output) console.log(JSON.stringify(result.output));
-  return result;
+  const result2 = await handleWakeUp();
+  if (result2.output) console.log(JSON.stringify(result2.output));
+  return result2;
 }
 async function handleWakeUp(options = {}) {
   const config2 = await (options.configLoader ?? loadAutopilotDeferralConfig)();
@@ -6343,7 +6880,7 @@ function defaultCliPath() {
 function createCliRunner(cliPath = defaultCliPath()) {
   return async (args, input) => {
     if (!cliPath) return { code: 1, stdout: "", stderr: "" };
-    return await new Promise((resolve, reject) => {
+    return await new Promise((resolve2, reject) => {
       const child = spawn(process.execPath, [cliPath, ...args], {
         stdio: [input === void 0 ? "ignore" : "pipe", "pipe", "pipe"],
         env: process.env
@@ -6359,16 +6896,16 @@ function createCliRunner(cliPath = defaultCliPath()) {
         stderr += chunk;
       });
       child.on("error", reject);
-      child.on("close", (code) => resolve({ code, stdout: stdout.trim(), stderr: stderr.trim() }));
+      child.on("close", (code) => resolve2({ code, stdout: stdout.trim(), stderr: stderr.trim() }));
       if (input !== void 0) child.stdin?.end(input);
     });
   };
 }
 async function runCliJson(runner, args, fallback) {
-  const result = await runner(args);
-  if (result.code !== 0 || !result.stdout) return fallback;
+  const result2 = await runner(args);
+  if (result2.code !== 0 || !result2.stdout) return fallback;
   try {
-    return JSON.parse(result.stdout);
+    return JSON.parse(result2.stdout);
   } catch {
     return fallback;
   }
@@ -6378,7 +6915,7 @@ function outputJson(payload) {
   process.stdout.write(`${JSON.stringify(payload)}
 `);
 }
-function asRecord(value) {
+function asRecord3(value) {
   return value && typeof value === "object" && !Array.isArray(value) ? value : null;
 }
 function stringField2(value) {
@@ -6496,7 +7033,7 @@ async function postToolUseHandler(input, runner) {
   const current = await readCounter(counterFile);
   const count = toolType === "write" ? current + 1 : current;
   if (toolType === "write") await writeCounter(counterFile, count);
-  const proposal = asRecord(await runCliJson(runner, ["proposals"], null));
+  const proposal = asRecord3(await runCliJson(runner, ["proposals"], null));
   const estimatedFiles = integerField(proposal?.estimatedFiles) ?? 0;
   const progress = await runProgress(runner, toolType, count);
   let message = `[HeadsDown] ${count} file(s) modified this session.`;
@@ -6505,9 +7042,9 @@ async function postToolUseHandler(input, runner) {
   if (estimatedFiles > 0 && count > Math.floor(estimatedFiles * 3 / 2)) {
     message += ` Scope warning: approved proposal estimated ${estimatedFiles} file(s), ${count} have been modified. Consider calling headsdown_propose with updated estimates.`;
   }
-  const progressRecord = asRecord(progress.payload);
+  const progressRecord = asRecord3(progress.payload);
   if (progressRecord && boolField(progressRecord.attentionWindowClosing)) {
-    const attentionWindow = asRecord(progressRecord.attentionWindow);
+    const attentionWindow = asRecord3(progressRecord.attentionWindow);
     const allowedActions = arrayOfStrings(progressRecord.allowedActionKeys);
     const runId = stringField2(progressRecord.runId);
     const source = stringField2(attentionWindow?.source);
@@ -6605,22 +7142,22 @@ function classifyTool(toolName) {
   return "external";
 }
 async function runProgress(runner, toolType, count) {
-  const result = await runner(["report-progress", toolType, String(count)]);
-  if (result.code !== 0) {
+  const result2 = await runner(["report-progress", toolType, String(count)]);
+  if (result2.code !== 0) {
     return {
       payload: null,
-      error: ["HeadsDown progress command failed.", result.stderr].filter(Boolean).join(" ")
+      error: ["HeadsDown progress command failed.", result2.stderr].filter(Boolean).join(" ")
     };
   }
-  if (!result.stdout) return { payload: null, error: "" };
+  if (!result2.stdout) return { payload: null, error: "" };
   try {
-    return { payload: JSON.parse(result.stdout), error: "" };
+    return { payload: JSON.parse(result2.stdout), error: "" };
   } catch {
     return { payload: null, error: "HeadsDown progress command returned invalid JSON." };
   }
 }
 async function buildSessionTimeboxPromptContext(progressRecord, claudeSessionId) {
-  const prompt = asRecord(progressRecord?.sessionTimeboxPrompt);
+  const prompt = asRecord3(progressRecord?.sessionTimeboxPrompt);
   if (!prompt || !boolField(prompt.active)) return null;
   const sessionId = stringField2(prompt.sessionId);
   const fingerprint = stringField2(prompt.fingerprint);
@@ -6703,22 +7240,22 @@ async function runHook(eventName, input, runner) {
   }
 }
 async function sessionStartHandler(runner) {
-  const queuedMarker = asRecord(await runCliJson(runner, ["action-marker", "active"], null));
+  const queuedMarker = asRecord3(await runCliJson(runner, ["action-marker", "active"], null));
   const queuedRunId = stringField2(queuedMarker?.runId);
   if (queuedRunId) {
     const handoffState = stringField2(queuedMarker?.handoffState) || "unknown";
-    const attemptByAction = asRecord(queuedMarker?.attemptByAction);
+    const attemptByAction = asRecord3(queuedMarker?.attemptByAction);
     const queuedAction = attemptByAction?.queue_for_morning ? "queue_for_morning" : stringField2(queuedMarker?.handoffKind) || "unknown";
     const systemMessage = queuedAction === "queue_for_morning" ? `[HeadsDown] Off the clock. Save the handoff and ask tomorrow. Run ${queuedRunId} is queued (handoff: ${handoffState}). Do not continue or ask again until resume_run succeeds or the user explicitly allows continuation. Claude Code controls the model. HeadsDown controls the run.` : `[HeadsDown] Queued run ${queuedRunId} is waiting. Handoff state: ${handoffState}. Do not continue or ask again until HeadsDown returns resume_run or the user explicitly resumes the run.`;
     return { systemMessage };
   }
   const statusResult = await runner(["status"]);
   if (statusResult.code !== 0 || !statusResult.stdout) return void 0;
-  const status2 = asRecord(parseJsonObject(statusResult.stdout));
+  const status2 = asRecord3(parseJsonObject(statusResult.stdout));
   if (!status2) return void 0;
-  const contract = asRecord(status2.contract);
-  const availability = asRecord(status2.availability);
-  const renderedCall = asRecord(status2.renderedHeadsDownCall);
+  const contract = asRecord3(status2.contract);
+  const availability = asRecord3(status2.availability);
+  const renderedCall = asRecord3(status2.renderedHeadsDownCall);
   let context = stringField2(renderedCall?.text) ? `[HeadsDown] ${stringField2(renderedCall?.text).replace(/\s+/g, " ")} Supporting availability context:` : "[HeadsDown] Supporting availability context:";
   const mode = stringField2(contract?.mode) || "unknown";
   const statusText = stringField2(contract?.statusText);
@@ -6730,15 +7267,15 @@ async function sessionStartHandler(runner) {
   }
   if (availability) {
     context += availability.inReachableHours === true ? " Currently in available hours." : " Currently outside available hours.";
-    const activeWindow = asRecord(availability.activeWindow);
+    const activeWindow = asRecord3(availability.activeWindow);
     const activeWindowLabel = stringField2(activeWindow?.label);
     if (activeWindowLabel) context += ` Active window: ${activeWindowLabel}.`;
-    const wrapUpGuidance = asRecord(availability.wrapUpGuidance);
+    const wrapUpGuidance = asRecord3(availability.wrapUpGuidance);
     if (typeof wrapUpGuidance?.remainingMinutes === "number") {
       context += ` Remaining attention budget: ${wrapUpGuidance.remainingMinutes} minutes.`;
     }
   }
-  const executionDirective = asRecord(status2.executionDirective);
+  const executionDirective = asRecord3(status2.executionDirective);
   const executionDirectiveCode = stringField2(executionDirective?.code);
   const executionDirectiveSummary = stringField2(executionDirective?.summary);
   if (executionDirectiveCode) {
@@ -6747,7 +7284,7 @@ async function sessionStartHandler(runner) {
   }
   const wrapUpInstruction = stringField2(status2.wrapUpInstruction);
   if (wrapUpInstruction) context += ` Execution guidance: ${wrapUpInstruction}`;
-  const transition = asRecord(await runCliJson(runner, ["next-window"], null));
+  const transition = asRecord3(await runCliJson(runner, ["next-window"], null));
   if (transition && typeof transition.minutesUntil === "number") {
     const nextLabel = stringField2(transition.nextWindowLabel);
     const nextMode = stringField2(transition.nextWindowMode);
@@ -6766,13 +7303,13 @@ async function sessionStartHandler(runner) {
   if (continuationResult.code === 0) {
     context += " [Continuation] A previous session left resumable work. Call headsdown_continuation with action 'load' for full details.";
   }
-  const wakeUp = asRecord(await runCliJson(runner, ["autopilot", "wake-up"], null));
-  const wakeUpContext = stringField2(asRecord(wakeUp?.hookSpecificOutput)?.additionalContext);
-  const autopilotPrompt = asRecord(
+  const wakeUp = asRecord3(await runCliJson(runner, ["autopilot", "wake-up"], null));
+  const wakeUpContext = stringField2(asRecord3(wakeUp?.hookSpecificOutput)?.additionalContext);
+  const autopilotPrompt = asRecord3(
     await runCliJson(runner, ["autopilot", "prompt", "--as-session-context"], null)
   );
   const autopilotPromptContext = stringField2(
-    asRecord(autopilotPrompt?.hookSpecificOutput)?.additionalContext
+    asRecord3(autopilotPrompt?.hookSpecificOutput)?.additionalContext
   );
   const additionalContext = [wakeUpContext, autopilotPromptContext].filter(Boolean).join("\n\n");
   if (additionalContext) {
@@ -6784,7 +7321,7 @@ async function sessionStartHandler(runner) {
   return { systemMessage: context };
 }
 async function preToolUseEditHandler(input, runner) {
-  const queuedMarker = asRecord(await runCliJson(runner, ["action-marker", "active"], null));
+  const queuedMarker = asRecord3(await runCliJson(runner, ["action-marker", "active"], null));
   const queuedRunId = stringField2(queuedMarker?.runId);
   if (queuedRunId) {
     const handoffState = stringField2(queuedMarker?.handoffState) || "unknown";
@@ -6794,9 +7331,9 @@ async function preToolUseEditHandler(input, runner) {
     };
   }
   const hookInput = parseJsonObject(input);
-  const toolInput = asRecord(hookInput.tool_input) ?? asRecord(hookInput.toolInput);
+  const toolInput = asRecord3(hookInput.tool_input) ?? asRecord3(hookInput.toolInput);
   const filePath = stringField2(toolInput?.file_path) || stringField2(toolInput?.path) || stringField2(toolInput?.filePath);
-  const config2 = asRecord(
+  const config2 = asRecord3(
     await runCliJson(runner, ["config"], { trustLevel: "advisory", sensitivePaths: [] })
   );
   const sensitivePaths = Array.isArray(config2?.sensitivePaths) ? config2.sensitivePaths.filter((item) => typeof item === "string") : [];
@@ -6807,9 +7344,9 @@ async function preToolUseEditHandler(input, runner) {
       systemMessage: `[HeadsDown] Sensitive file detected: ${filePath} matches protected pattern '${sensitiveMatch}'. User confirmation required regardless of availability mode.`
     };
   }
-  const status2 = asRecord(await runCliJson(runner, ["status"], null));
+  const status2 = asRecord3(await runCliJson(runner, ["status"], null));
   if (!status2) return void 0;
-  const contract = asRecord(status2.contract);
+  const contract = asRecord3(status2.contract);
   const mode = stringField2(contract?.mode) || "none";
   const statusText = stringField2(contract?.statusText);
   const statusLabel = statusText ? ` (${statusText})` : "";
@@ -6817,7 +7354,7 @@ async function preToolUseEditHandler(input, runner) {
   const trustLevel = stringField2(config2?.trustLevel) || "advisory";
   const proposalCheck = trustLevel === "active" || trustLevel === "guarded" ? await runner(["proposals", "--check"]) : null;
   const hasProposal = proposalCheck?.code === 0;
-  const proposal = hasProposal ? asRecord(await runCliJson(runner, ["proposals"], null)) : null;
+  const proposal = hasProposal ? asRecord3(await runCliJson(runner, ["proposals"], null)) : null;
   const proposalDesc = stringField2(proposal?.description);
   if (trustLevel === "advisory") {
     if (mode === "offline") {
@@ -6914,8 +7451,8 @@ async function preToolUseEditHandler(input, runner) {
   return void 0;
 }
 async function preCompactHandler(runner) {
-  const proposal = asRecord(await runCliJson(runner, ["proposals"], null));
-  const status2 = asRecord(await runCliJson(runner, ["status"], null));
+  const proposal = asRecord3(await runCliJson(runner, ["proposals"], null));
+  const status2 = asRecord3(await runCliJson(runner, ["status"], null));
   const proposalDesc = stringField2(proposal?.description);
   const estimatedFiles = proposal?.estimatedFiles === void 0 ? "" : String(proposal.estimatedFiles);
   const wrapUpInstruction = stringField2(status2?.wrapUpInstruction);
@@ -6930,17 +7467,17 @@ async function preCompactHandler(runner) {
   return { systemMessage: context };
 }
 async function passthroughJson(runner, args) {
-  const result = await runner(args);
-  if (result.code !== 0 || !result.stdout) return void 0;
-  return parseJsonObject(result.stdout);
+  const result2 = await runner(args);
+  if (result2.code !== 0 || !result2.stdout) return void 0;
+  return parseJsonObject(result2.stdout);
 }
 async function stopDetectDeferralHandler(runner) {
-  const result = await runner(["autopilot", "detect-deferral"]);
-  if (result.code === 2) {
-    if (result.stderr) process.stderr.write(result.stderr);
+  const result2 = await runner(["autopilot", "detect-deferral"]);
+  if (result2.code === 2) {
+    if (result2.stderr) process.stderr.write(result2.stderr);
     process.exitCode = 2;
   }
-  if (result.stdout) return parseJsonObject(result.stdout);
+  if (result2.stdout) return parseJsonObject(result2.stdout);
   return void 0;
 }
 function sessionEndHandler(input) {
@@ -7015,7 +7552,7 @@ function globishMatch(value, pattern) {
 
 // src/time-box-store.ts
 import { mkdir as mkdir7, readFile as readFile10, unlink as unlink2, writeFile as writeFile9 } from "node:fs/promises";
-import { createHash as createHash2 } from "node:crypto";
+import { createHash as createHash3 } from "node:crypto";
 import { dirname as dirname5, join as join11 } from "node:path";
 import { homedir as homedir8 } from "node:os";
 var LocalTimeBoxStore = class {
@@ -7079,7 +7616,7 @@ function defaultTimeBoxPath(env = process.env) {
   return join11(homedir8(), ".config", "headsdown", `time-box-${defaultSessionIdHash(env)}.json`);
 }
 function hashSessionId(sessionId) {
-  return createHash2("sha256").update(sessionId).digest("hex").slice(0, 16);
+  return createHash3("sha256").update(sessionId).digest("hex").slice(0, 16);
 }
 function validateStoredTimeBoxState(value) {
   if (!value || typeof value !== "object") return "state must be an object";
@@ -7292,6 +7829,90 @@ function mergeHints(first, second) {
   return [.../* @__PURE__ */ new Set([...first, ...second])];
 }
 
+// src/referee/local-runner.ts
+import { execFile as execFileCallback } from "node:child_process";
+import { readFile as readFile11, realpath } from "node:fs/promises";
+import { isAbsolute, relative, resolve } from "node:path";
+import { promisify } from "node:util";
+var execFile = promisify(execFileCallback);
+var GIT_STATUS_ARGS = ["status", "--short", "--untracked-files=all"];
+function assertInsideWorkspace(workspaceRoot, candidatePath) {
+  const relativePath = relative(workspaceRoot, candidatePath);
+  if (relativePath === ".." || relativePath.startsWith("../") || relativePath.startsWith("..\\") || isAbsolute(relativePath)) {
+    throw new Error("Local Referee contract_path must stay inside the workspace.");
+  }
+}
+async function resolveContractPath(options) {
+  const workspaceRoot = await options.realpath(options.cwd);
+  const requestedPath = options.contractPath?.trim() || LOCAL_REFEREE_CONTRACT_PATH;
+  const lexicalPath = isAbsolute(requestedPath) ? resolve(requestedPath) : resolve(workspaceRoot, requestedPath);
+  assertInsideWorkspace(workspaceRoot, lexicalPath);
+  let realContractPath;
+  try {
+    realContractPath = await options.realpath(lexicalPath);
+  } catch {
+    throw new Error(
+      `Local Referee contract not found. Create ${LOCAL_REFEREE_CONTRACT_PATH} or pass contract_path.`
+    );
+  }
+  assertInsideWorkspace(workspaceRoot, realContractPath);
+  return realContractPath;
+}
+async function defaultGitStatusShort(cwd) {
+  const result2 = await execFile("git", [...GIT_STATUS_ARGS], {
+    cwd,
+    timeout: 5e3,
+    maxBuffer: 1024 * 1024
+  });
+  return result2.stdout;
+}
+function countTouchedFilesFromGitStatus(status2) {
+  return status2.split(/\r?\n/).filter((line) => line.trim().length > 0).length;
+}
+async function countTouchedFiles(cwd, gitStatusShort) {
+  try {
+    return countTouchedFilesFromGitStatus(await gitStatusShort(cwd));
+  } catch {
+    throw new Error(
+      "Local Referee could not count touched files with git status. Pass files_touched evidence explicitly."
+    );
+  }
+}
+async function loadLocalRefereeContract(options) {
+  const resolveRealpath = options.adapters?.realpath ?? realpath;
+  const path = await resolveContractPath({
+    cwd: options.cwd,
+    contractPath: options.contractPath,
+    realpath: resolveRealpath
+  });
+  const read = options.adapters?.readFile ?? readFile11;
+  const contents = await read(path, "utf-8");
+  return parseLocalRefereeContractJson(contents);
+}
+async function collectLocalRefereeEvidence(options) {
+  const rawEvidence = options.evidence ?? {};
+  const gitStatusShort = options.adapters?.gitStatusShort ?? defaultGitStatusShort;
+  const filesTouched = rawEvidence.filesTouched === void 0 || rawEvidence.filesTouched === null ? await countTouchedFiles(options.cwd, gitStatusShort) : rawEvidence.filesTouched;
+  return normalizeLocalRefereeEvidence({
+    ...rawEvidence,
+    filesTouched,
+    networkRequired: rawEvidence.networkRequired ?? false
+  });
+}
+async function runLocalReferee(options) {
+  const contract = await loadLocalRefereeContract(options);
+  const evidence = await collectLocalRefereeEvidence(options);
+  const evaluation = evaluateLocalRefereeContract(contract, evidence);
+  const receipt = buildLocalRefereeReceipt({ contract, evidence, evaluation, now: options.now });
+  return {
+    contract,
+    evidence,
+    evaluation,
+    receipt,
+    renderedReceipt: renderLocalRefereeReceiptMarkdown(receipt)
+  };
+}
+
 // src/report-progress-response.ts
 function buildReportProgressResponse(input) {
   const currentRun = resolveCurrentRunContext({
@@ -7464,6 +8085,8 @@ async function main() {
       return await actionMarker();
     case "time-box":
       return await timeBox();
+    case "referee":
+      return await referee();
     case "autopilot":
       return await autopilotCli();
     case "hook":
@@ -7558,7 +8181,7 @@ async function proposals() {
     const metaPath = store.filePath.replace(/\.json$/, ".meta.json");
     let meta = {};
     try {
-      const metaRaw = await readFile11(metaPath, "utf-8");
+      const metaRaw = await readFile12(metaPath, "utf-8");
       meta = JSON.parse(metaRaw);
     } catch {
     }
@@ -7692,6 +8315,132 @@ async function timeBox() {
       process.exit(1);
   }
 }
+async function referee() {
+  try {
+    const { contractPath, evidence } = await parseRefereeArgs(process.argv.slice(3));
+    const result2 = await runLocalReferee({ cwd: process.cwd(), contractPath, evidence });
+    console.log(result2.renderedReceipt);
+  } catch (error) {
+    console.error(error instanceof Error ? error.message : String(error));
+    process.exit(1);
+  }
+}
+async function parseRefereeArgs(args) {
+  const evidence = {};
+  let contractPath;
+  let hasEvidence = false;
+  let deleteEvidenceFile = false;
+  for (let index = 0; index < args.length; index += 1) {
+    const arg = args[index];
+    const next = args[index + 1];
+    switch (arg) {
+      case "--contract-path":
+        contractPath = requireValue(arg, next);
+        index += 1;
+        break;
+      case "--evidence-json": {
+        const parsed = parseEvidenceJson(requireValue(arg, next));
+        Object.assign(evidence, parsed);
+        hasEvidence = true;
+        index += 1;
+        break;
+      }
+      case "--evidence-stdin": {
+        const parsed = parseEvidenceJson(await readStdinText(), arg);
+        Object.assign(evidence, parsed);
+        hasEvidence = true;
+        break;
+      }
+      case "--evidence-file": {
+        const evidencePath = requireValue(arg, next);
+        const parsed = parseEvidenceJson(
+          await readEvidenceFile(evidencePath, deleteEvidenceFile),
+          arg
+        );
+        Object.assign(evidence, parsed);
+        hasEvidence = true;
+        index += 1;
+        break;
+      }
+      case "--delete-evidence-file":
+        deleteEvidenceFile = true;
+        break;
+      case "--files-touched":
+        evidence.filesTouched = requireValue(arg, next);
+        hasEvidence = true;
+        index += 1;
+        break;
+      case "--tool-calls":
+        evidence.toolCalls = requireValue(arg, next);
+        hasEvidence = true;
+        index += 1;
+        break;
+      case "--validation-status":
+        evidence.validationStatus = requireValue(arg, next);
+        hasEvidence = true;
+        index += 1;
+        break;
+      case "--tests-run":
+        evidence.testsRun = requireValue(arg, next);
+        hasEvidence = true;
+        index += 1;
+        break;
+      case "--network-required":
+        evidence.networkRequired = requireValue(arg, next);
+        hasEvidence = true;
+        index += 1;
+        break;
+      case "--git-commit-present":
+        evidence.gitCommitPresent = requireValue(arg, next);
+        hasEvidence = true;
+        index += 1;
+        break;
+      case "--elapsed-minutes":
+        evidence.elapsedMinutes = requireValue(arg, next);
+        hasEvidence = true;
+        index += 1;
+        break;
+      case "--manual-review-round-trips-avoided":
+        evidence.manualReviewRoundTripsAvoided = requireValue(arg, next);
+        hasEvidence = true;
+        index += 1;
+        break;
+      case "--outcome":
+        evidence.outcome = requireValue(arg, next);
+        hasEvidence = true;
+        index += 1;
+        break;
+      case void 0:
+        break;
+      default:
+        throw new Error(`Unsupported referee option: ${arg}`);
+    }
+  }
+  return { contractPath, evidence: hasEvidence ? evidence : void 0 };
+}
+function requireValue(flag, value) {
+  if (!value || value.startsWith("--")) throw new Error(`${flag} requires a value.`);
+  return value;
+}
+async function readStdinText() {
+  const chunks = [];
+  for await (const chunk of process.stdin) {
+    chunks.push(chunk);
+  }
+  return Buffer.concat(chunks).toString("utf-8").trim();
+}
+async function readEvidenceFile(path, deleteAfterRead) {
+  const value = await readFile12(path, "utf-8");
+  if (deleteAfterRead) await unlink3(path);
+  return value.trim();
+}
+function parseEvidenceJson(value, source = "--evidence-json") {
+  const parsed = JSON.parse(value);
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+    throw new Error(`${source} must be a JSON object.`);
+  }
+  return parsed;
+}
 async function continuation() {
   const subcommand = process.argv[3];
   switch (subcommand) {
@@ -7710,7 +8459,7 @@ async function continuation() {
       break;
     }
     case "load": {
-      const raw = await readFile11(CONTINUATION_PATH, "utf-8");
+      const raw = await readFile12(CONTINUATION_PATH, "utf-8");
       console.log(raw);
       await unlink3(CONTINUATION_PATH);
       break;

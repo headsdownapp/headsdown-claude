@@ -27,6 +27,7 @@ import {
   resolveEffectiveAttentionWindow,
 } from "./time-box.js";
 import { resolveSessionTimeboxPrompt } from "./session-timebox.js";
+import { runLocalReferee } from "./referee/index.js";
 import {
   buildReportProgressResponse,
   buildReportProgressUnavailableResponse,
@@ -39,6 +40,7 @@ import type {
   ScheduleResolution,
   Verdict,
 } from "@headsdown/sdk";
+import type { LocalRefereeRawEvidence } from "@headsdown/sdk/referee";
 
 const command = process.argv[2];
 
@@ -66,6 +68,8 @@ async function main() {
       return await actionMarker();
     case "time-box":
       return await timeBox();
+    case "referee":
+      return await referee();
     case "autopilot":
       return await autopilotCli();
     case "hook":
@@ -359,6 +363,143 @@ async function timeBox() {
  * Manage continuation artifacts for resumable work sessions.
  * Subcommands: save (reads JSON from stdin), load (outputs and deletes), check (exits 0/1).
  */
+async function referee() {
+  try {
+    const { contractPath, evidence } = await parseRefereeArgs(process.argv.slice(3));
+    const result = await runLocalReferee({ cwd: process.cwd(), contractPath, evidence });
+    console.log(result.renderedReceipt);
+  } catch (error) {
+    console.error(error instanceof Error ? error.message : String(error));
+    process.exit(1);
+  }
+}
+
+async function parseRefereeArgs(args: string[]): Promise<{
+  contractPath?: string;
+  evidence?: LocalRefereeRawEvidence;
+}> {
+  const evidence: LocalRefereeRawEvidence = {};
+  let contractPath: string | undefined;
+  let hasEvidence = false;
+  let deleteEvidenceFile = false;
+
+  for (let index = 0; index < args.length; index += 1) {
+    const arg = args[index];
+    const next = args[index + 1];
+    switch (arg) {
+      case "--contract-path":
+        contractPath = requireValue(arg, next);
+        index += 1;
+        break;
+      case "--evidence-json": {
+        const parsed = parseEvidenceJson(requireValue(arg, next));
+        Object.assign(evidence, parsed);
+        hasEvidence = true;
+        index += 1;
+        break;
+      }
+      case "--evidence-stdin": {
+        const parsed = parseEvidenceJson(await readStdinText(), arg);
+        Object.assign(evidence, parsed);
+        hasEvidence = true;
+        break;
+      }
+      case "--evidence-file": {
+        const evidencePath = requireValue(arg, next);
+        const parsed = parseEvidenceJson(
+          await readEvidenceFile(evidencePath, deleteEvidenceFile),
+          arg,
+        );
+        Object.assign(evidence, parsed);
+        hasEvidence = true;
+        index += 1;
+        break;
+      }
+      case "--delete-evidence-file":
+        deleteEvidenceFile = true;
+        break;
+      case "--files-touched":
+        evidence.filesTouched = requireValue(arg, next);
+        hasEvidence = true;
+        index += 1;
+        break;
+      case "--tool-calls":
+        evidence.toolCalls = requireValue(arg, next);
+        hasEvidence = true;
+        index += 1;
+        break;
+      case "--validation-status":
+        evidence.validationStatus = requireValue(arg, next);
+        hasEvidence = true;
+        index += 1;
+        break;
+      case "--tests-run":
+        evidence.testsRun = requireValue(arg, next);
+        hasEvidence = true;
+        index += 1;
+        break;
+      case "--network-required":
+        evidence.networkRequired = requireValue(arg, next);
+        hasEvidence = true;
+        index += 1;
+        break;
+      case "--git-commit-present":
+        evidence.gitCommitPresent = requireValue(arg, next);
+        hasEvidence = true;
+        index += 1;
+        break;
+      case "--elapsed-minutes":
+        evidence.elapsedMinutes = requireValue(arg, next);
+        hasEvidence = true;
+        index += 1;
+        break;
+      case "--manual-review-round-trips-avoided":
+        evidence.manualReviewRoundTripsAvoided = requireValue(arg, next);
+        hasEvidence = true;
+        index += 1;
+        break;
+      case "--outcome":
+        evidence.outcome = requireValue(arg, next);
+        hasEvidence = true;
+        index += 1;
+        break;
+      case undefined:
+        break;
+      default:
+        throw new Error(`Unsupported referee option: ${arg}`);
+    }
+  }
+
+  return { contractPath, evidence: hasEvidence ? evidence : undefined };
+}
+
+function requireValue(flag: string, value: string | undefined): string {
+  if (!value || value.startsWith("--")) throw new Error(`${flag} requires a value.`);
+  return value;
+}
+
+async function readStdinText(): Promise<string> {
+  const chunks: Buffer[] = [];
+  for await (const chunk of process.stdin) {
+    chunks.push(chunk as Buffer);
+  }
+  return Buffer.concat(chunks).toString("utf-8").trim();
+}
+
+async function readEvidenceFile(path: string, deleteAfterRead: boolean): Promise<string> {
+  const value = await readFile(path, "utf-8");
+  if (deleteAfterRead) await unlink(path);
+  return value.trim();
+}
+
+function parseEvidenceJson(value: string, source = "--evidence-json"): LocalRefereeRawEvidence {
+  const parsed: unknown = JSON.parse(value);
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+    throw new Error(`${source} must be a JSON object.`);
+  }
+  return parsed as LocalRefereeRawEvidence;
+}
+
 async function continuation() {
   const subcommand = process.argv[3];
 

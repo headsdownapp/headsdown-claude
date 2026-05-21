@@ -184,6 +184,12 @@ When presenting digest entries, cross-reference them with your current working c
 
 After summarizing, scan for actionable items: direct requests, assigned issues, flagged PRs, or anything that requires a response or code change. For each actionable item, offer to draft a proposal. Example: "Sarah's Slack message looks like a feature request — want me to propose it as a task?" This closes the loop from "I was in focus mode and missed this" to "here's the follow-up work queued."
 
+## Local Referee
+
+Use `/headsdown:referee` when the user asks for local verification or when a run needs an account-optional review receipt. The local Referee reads the repo-local completion contract and local evidence, then prints a privacy-safe receipt without signing in or contacting hosted HeadsDown.
+
+The receipt contains derived review fields only: check outcomes, broad buckets, validation status, test/network booleans, outcome category, generated time, and an opaque contract reference. Do not add prompts, code, file paths, repository names, branch names, terminal output, logs, transcripts, or message contents to the receipt.
+
 ## Task Outcome Reporting
 
 After completing a task that was approved via `headsdown_propose`, call `headsdown_report` to record the outcome. This helps HeadsDown calibrate future verdicts for better accuracy.
